@@ -13,5 +13,9 @@ Run on local machine using Docker
 
 Run in Vagrant
 --------------
-TODO
+* Install Vagrant & VirtualBox
+* Clone this repository
+* Configure discovery in coreos-userdata (optional)
+* Run `vagrant up`
+* No frontend yet
 
