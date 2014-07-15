@@ -1,0 +1,6 @@
+[X] Implement basic builder service that can build images using a 
+    predefined list of repositories;
+[X] Publish the available (build) images through Etcd;
+[ ] Make the service a little more smarter by watching the
+    repositories for changes, automatic rebuild of images;
+[ ] any other fix/feature...
