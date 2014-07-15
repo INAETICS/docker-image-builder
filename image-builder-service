@@ -28,6 +28,10 @@ cd $(dirname $0)
 img_name=$1
 git_repo_url=$2
 
+_log() {
+    echo $@ >&2
+}
+
 if [ -z $img_name ] || [ -z $git_repo_url ]; then
     _log "Usage: $(basename $0) IMG_NAME GIT_REPO_URL"
     exit $EINVALID_ARGS
@@ -58,10 +62,6 @@ if [ -z $docker ]; then
     _log "Docker not available, cannot run $(basename $0)!"
     exit $ENO_DOCKER
 fi
-
-_log() {
-    echo $@ >&2
-}
 
 # Locates a service inside Etcd
 #   args: NAME - the service name to lookup;
