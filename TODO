@@ -1,6 +1,11 @@
 [X] Implement basic builder service that can build images using a 
     predefined list of repositories;
 [X] Publish the available (build) images through Etcd;
-[ ] Make the service a little more smarter by watching the
+[X] Make the service a little more smarter by watching the
     repositories for changes, automatic rebuild of images;
+[ ] Push the build images to Docker;
+[ ] Rename repository to 'docker-image-builder';
+[ ] Add support for branches other that 'master';
+[ ] Incorporate Docker bash library;
+[ ] Incorporate Etcd bash library;
 [ ] any other fix/feature...
