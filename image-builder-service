@@ -44,7 +44,7 @@ if [ -z $etcdctl ]; then
     exit $ENO_ETCDCTL
 else
     # Try to invoke it, to see we can contact Etcd...
-    _=$($etcdctl ls &>/dev/null)
+    _=$($etcdctl ls >/dev/null 2>&1)
     if [ "$?" != "0" ]; then
         _log "Unable to access Etcd, is it not running?!"
         exit $EETCD_UNREACHABLE
@@ -80,7 +80,7 @@ locate_service() {
 #   returns: nothing
 init_etcd() {
     local ns=$1
-    $($etcdctl ls "$ns" &>/dev/null)
+    $($etcdctl ls "$ns" >/dev/null 2>&1)
     if [ "$?" = "4" ]; then
         _log "Dir ${ns} not found, creating one..."
         $etcdctl mkdir "$ns" 2>&1 >/dev/null
@@ -92,7 +92,7 @@ init_etcd() {
 #   returns: nothing
 _clear_etcd() {
     local ns=$1
-    $etcdctl rm "$ns" --recursive &>/dev/null
+    $etcdctl rm "$ns" --recursive >/dev/null 2>&1
     if [ "$?" != "0" ]; then
         _log "Clearing failed..."
     fi
@@ -183,7 +183,7 @@ _replace_apt_cacher() {
 
     local value=$(locate_service "inaetics/apt-cacher-service")
     if [ -z "$value" ]; then
-        _log "Nothing to replace (no replacement value given)!"
+        _log "Cannot replace APT_CACHER macro: no replacement value given!"
         return
     fi
     value="RUN echo \"Acquire::http::Proxy \\\\\"http://${value}\\\\\";\" >/etc/apt/apt.conf.d/01proxy"
@@ -212,20 +212,19 @@ build_image() {
     if [ -d $tmp_dir ]; then
         # Repository already exists, update it...
         cd $tmp_dir
-        $git remote update 2>&1 >/dev/null
+        $git remote update >/dev/null 2>&1
         changed=$($git status -uno | grep behind)
         if [ -z "$changed" ]; then
-            # We're done, nothing needs to be build?! TODO is this always the case?
-            _log "Nothing needs to be done for $name in $tmp_dir..."
+            _log "No changes in for $name in $tmp_dir..."
         else
             _log "Pulling latest changes for $name in $tmp_dir..."
-            $git pull 2>&1 >/dev/null
+            $git pull >/dev/null 2>&1
         fi
-        cd - >/dev/null
+        cd - >/dev/null 2>&1
     else
         _log "Cloning $name to $tmp_dir..."
         # Repository does not exist, clone it...
-        $git clone --depth=1 $repo_url $tmp_dir 2>&1 >/dev/null
+        $git clone --depth=1 $repo_url $tmp_dir >/dev/null 2>&1
     fi
 
     if [ $? != 0 ]; then
@@ -242,7 +241,9 @@ build_image() {
     _replace_apt_cacher "$tmp_dir/Dockerfile"
     _replace_jdk_location "$tmp_dir/Dockerfile"
 
-    result=$($docker build -q -t $name $tmp_dir 2>/dev/null | grep 'Successfully built ' | awk '{print $3}')
+    _log "Building image $name, this can take a little while..."
+
+    result=$($docker build -q -t $name $tmp_dir 2>&1 | grep 'Successfully built ' | awk '{print $3}')
     if [ $? != 0 ]; then
         _log "Building image ($name) failed!"
         exit $EBUILD_FAILURE
