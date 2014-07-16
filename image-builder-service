@@ -24,18 +24,38 @@ readonly etcd_ns="/inaetics/image-builder-service"
 oldpwd=`pwd`
 cd $(dirname $0)
 
-# Fetch the arguments & check semantics
-img_name=$1
-git_repo_url=$2
-
 _log() {
     echo $@ >&2
 }
 
-if [ -z $img_name ] || [ -z $git_repo_url ]; then
-    _log "Usage: $(basename $0) IMG_NAME GIT_REPO_URL"
+_show_usage() {
+    echo "Usage: $(basename $0) COMMAND [arg...]
+
+Commands:
+  build REPO_NAME GIT_REPO_URL
+     builds a new or updates an existing Docker image, pulling the repository from
+     the given Git repository URL and tagging it with the given REPO_NAME;
+  list
+     shows a list of all build images.
+"
     exit $EINVALID_ARGS
+}
+
+# Fetch the arguments & check semantics
+command=$1
+
+if [ "$command" == "build" ]; then
+    # Needs two additional arguments
+    img_name=$2
+    git_repo_url=$3
+
+    if [ -z $img_name ] || [ -z $git_repo_url ]; then
+        _show_usage
+    fi
+elif [ "$command" != "list" ]; then
+    _show_usage
 fi
+
 
 # We depend on Etcd, so lets verify we can use it...
 etcdctl=$(which etcdctl)
@@ -113,7 +133,7 @@ _get_build_image() {
 
     local repo_url=$($etcdctl get "$ns/$img_name/repo" | tr -d "\"")
     local docker_id=$($etcdctl get "$ns/$img_name/dockerId" | tr -d "\"")
-    echo "${img_name} ${repo_url} ${docker_id}"
+    printf "%-25s %-16s %s\n" $img_name $docker_id $repo_url
 }
 
 # Provides a list of all images that were build.
@@ -122,10 +142,9 @@ _get_build_image() {
 _get_build_images() {
     local ns=$1
     local imgs=($($etcdctl ls "$ns" 2>&1))
+    printf "%-25s %-16s %s\n" "REPOSITORY NAME" "IMAGE ID" "GIT URL"
     for img in ${imgs[@]}; do
-        local repo_url=$($etcdctl get "$img/repo" | tr -d "\"")
-        local docker_id=$($etcdctl get "$img/dockerId" | tr -d "\"")
-        echo "${img/$ns\//} ${repo_url} ${docker_id}"
+        _get_build_image $ns ${img/$ns\//}
     done
 }
 
@@ -260,12 +279,19 @@ build_image() {
 # Initialize the Etcd namespace...
 init_etcd $etcd_ns
 
-result=$(_get_build_image $etcd_ns $img_name)
-if [ -z "$result" ]; then
-    _log "Image ($img_name) not yet build, starting one..."
-fi
+case $command in
+    build)
+        result=$(_get_build_image $etcd_ns $img_name)
+        if [ -z "$result" ]; then
+            _log "Image ($img_name) not yet build, starting one..."
+        fi
+        build_image $img_name $git_repo_url
+        ;;
+    list)
+        _get_build_images $etcd_ns
+        ;;
+esac
 
-build_image $img_name $git_repo_url
 
 cd $oldpwd
 exit 0
