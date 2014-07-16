@@ -8,9 +8,7 @@
 # Script return values
 readonly EOK=0
 readonly EINVALID_ARGS=1
-readonly ENO_ETCDCTL=2
-readonly ENO_GIT=2
-readonly ENO_DOCKER=2
+readonly EMISSING_COMMAND=2
 readonly ENO_DOCKER_REPO=3
 readonly EETCD_UNREACHABLE=4
 readonly EREPO_CLONE_FAILED=5
@@ -20,9 +18,6 @@ readonly EUNKNOWN_IMAGE=8
 # Local constants
 readonly builder_root="/tmp/image-builder"
 readonly etcd_ns="/inaetics/image-builder-service"
-
-oldpwd=`pwd`
-cd $(dirname $0)
 
 _log() {
     echo $@ >&2
@@ -37,6 +32,8 @@ Commands:
      the given Git repository URL and tagging it with the given REPO_NAME;
   list
      shows a list of all build images.
+  update
+     checks all previously build images and rebuild them if necessary.
 "
     exit $EINVALID_ARGS
 }
@@ -52,35 +49,28 @@ if [ "$command" == "build" ]; then
     if [ -z $img_name ] || [ -z $git_repo_url ]; then
         _show_usage
     fi
-elif [ "$command" != "list" ]; then
+elif [ "$command" != "list" ] && [ "$command" != "update" ]; then
     _show_usage
 fi
 
-
-# We depend on Etcd, so lets verify we can use it...
-etcdctl=$(which etcdctl)
-if [ -z $etcdctl ]; then
-    _log "Etcdctl not available, cannot run $(basename $0)!"
-    exit $ENO_ETCDCTL
-else
-    # Try to invoke it, to see we can contact Etcd...
-    _=$($etcdctl ls >/dev/null 2>&1)
-    if [ "$?" != "0" ]; then
-        _log "Unable to access Etcd, is it not running?!"
-        exit $EETCD_UNREACHABLE
+# We depend on Etcd, Git and Docker, so lets verify we can use those...
+missing=0
+for cmd in etcdctl git docker; do
+    if ! hash "$cmd" >/dev/null 2>&1; then
+        _log "Command $cmd not found in PATH! Cannot run $(basename $0)!"
+        ((missing++))
     fi
+done
+# Do not try to continue with this...
+if ((missing > 0)); then
+    exit $EMISSING_COMMAND
 fi
-# We need Git as well, so lets search for that one as well...
-git=$(which git)
-if [ -z $git ]; then
-    _log "Git not available, cannot run $(basename $0)!"
-    exit $ENO_GIT
-fi
-# Last stop: check for the availability of Docker...
-docker=$(which docker)
-if [ -z $docker ]; then
-    _log "Docker not available, cannot run $(basename $0)!"
-    exit $ENO_DOCKER
+
+# Try to invoke etcdctl, to see we can contact the Etcd cluster...
+etcdctl ls >/dev/null 2>&1
+if [ "$?" != "0" ]; then
+    _log "Unable to access Etcd, is it not running?!"
+    exit $EETCD_UNREACHABLE
 fi
 
 # Locates a service inside Etcd
@@ -89,9 +79,9 @@ fi
 locate_service() {
     local name=$1
 
-    local services=$($etcdctl ls $name 2>/dev/null)
+    local services=$(etcdctl ls $name 2>/dev/null)
     for service in ${services[@]}; do
-        echo $($etcdctl get $service) | tr -d "\""
+        echo $(etcdctl get $service) | tr -d "\""
     done
 }
 
@@ -100,10 +90,10 @@ locate_service() {
 #   returns: nothing
 init_etcd() {
     local ns=$1
-    $($etcdctl ls "$ns" >/dev/null 2>&1)
+    $(etcdctl ls "$ns" >/dev/null 2>&1)
     if [ "$?" = "4" ]; then
         _log "Dir ${ns} not found, creating one..."
-        $etcdctl mkdir "$ns" 2>&1 >/dev/null
+        etcdctl mkdir "$ns" 2>&1 >/dev/null
     fi
 }
 
@@ -112,28 +102,72 @@ init_etcd() {
 #   returns: nothing
 _clear_etcd() {
     local ns=$1
-    $etcdctl rm "$ns" --recursive >/dev/null 2>&1
+    etcdctl rm "$ns" --recursive >/dev/null 2>&1
     if [ "$?" != "0" ]; then
         _log "Clearing failed..."
     fi
 }
 
-# Provides information on earlier build images.
+_etcd_create_dir() {
+    local ns=$1
+    local name=$2
+    # Create directory?
+    etcdctl ls "$ns/$name" >/dev/null 2>&1
+    if [ $? != 0 ]; then
+        etcdctl mkdir "$ns/$name" >/dev/null 2>&1
+        if [ $? != 0 ]; then
+            _log "Failed to create directory..."
+            exit $EPUBLISH_FAILED
+        fi
+    fi
+}
+
+_etcd_set() {
+    local ns=$1
+    local key=$2
+    local value=$3
+
+    etcdctl set "$ns/$key" $value >/dev/null 2>&1
+    if [ $? != 0 ]; then
+        _log "Failed to set '$key' [$?]!"
+        exit $EPUBLISH_FAILED # TODO specific exit code
+    fi
+}
+
+_etcd_get() {
+    local ns=$1
+    local key=$2
+
+    etcdctl get "$ns/$key" 2>/dev/null | tr -d "\""
+}
+
+# Returns the image ID of an earlier build Docker image (from Etcd)
 #   args: NS - the Etcd namespace to look for build images;
-#         IMG_NAME - the name of the image to fetch.
-#   returns: <img name> <git URL> <docker ID>
-_get_build_image() {
+#         IMG_NAME - the name of the image to fetch the ID for.
+#   returns: the full image ID.
+_get_build_image_id() {
     local ns=$1
     local img_name=$2
 
-    local keys=$($etcdctl ls "$ns/$img_name" 2>/dev/null)
-    if [ -z "$keys" ]; then
-        return
-    fi
+    _etcd_get $ns "$img_name/dockerId"
+}
 
-    local repo_url=$($etcdctl get "$ns/$img_name/repo" | tr -d "\"")
-    local docker_id=$($etcdctl get "$ns/$img_name/dockerId" | tr -d "\"")
-    printf "%-25s %-16s %s\n" $img_name $docker_id $repo_url
+# Returns the image ID from Docker
+#   args: IMG_NAME - the name of the image to fetch the ID for.
+#   returns: the full image ID.
+_get_docker_image_id() {
+    local img_name=$1
+
+    docker inspect --format='{{.Id}}' $img_name 2>/dev/null
+}
+
+# Returns the current revision of a Git branch.
+#   args: BRANCH - the name of the branch to get the revision for.
+#   returns: the revision (or commit) hash.
+_get_git_rev() {
+    local branch=$1
+
+    git log --pretty=oneline -1 $branch 2>/dev/null | awk '{print $1}'
 }
 
 # Provides a list of all images that were build.
@@ -141,43 +175,14 @@ _get_build_image() {
 #   returns: <img name> <git URL> <docker ID>
 _get_build_images() {
     local ns=$1
-    local imgs=($($etcdctl ls "$ns" 2>&1))
-    printf "%-25s %-16s %s\n" "REPOSITORY NAME" "IMAGE ID" "GIT URL"
+    local imgs=($(etcdctl ls "$ns" 2>&1))
+    printf "%-25s %-12s %-12s %s\n" "REPOSITORY NAME" "IMAGE ID" "GIT REV" "GIT URL"
     for img in ${imgs[@]}; do
-        _get_build_image $ns ${img/$ns\//}
+        local gitRev=$(etcdctl get "$img/gitRev" | tr -d "\"")
+        local gitUrl=$(etcdctl get "$img/gitRepo" | tr -d "\"")
+        local dockerId=$(etcdctl get "$img/dockerId" | tr -d "\"")
+        printf "%-25s %.12s %.12s %s\n" ${img/$ns\//} $dockerId $gitRev $gitUrl
     done
-}
-
-# Publishes a new build image to Etcd
-#   args: NS - the Etcd namespace to store the image name in;
-#         IMG_NAME - the name of the build image to publish;
-#         GIT_REPO - the Git repository of the build image;
-#         IMG_ID - the Docker image ID of the build image.
-#   returns: nothing
-_publish_build_image() {
-    local ns=$1
-    local img_name=$2
-    local git_repo=$3
-    local img_id=$4
-    # Create directory?
-    result=$($etcdctl ls "$ns/$img_name" 2>&1 >/dev/null)
-    if [ $? != 0 ]; then
-        $etcdctl mkdir "$ns/$img_name" 2>&1 >/dev/null
-        if [ $? != 0 ]; then
-            _log "Failed to create directory..."
-            exit $EPUBLISH_FAILED
-        fi
-    fi
-    $etcdctl set $ns/$img_name/repo $git_repo 2>&1 >/dev/null
-    if [ "$?" != "0" ]; then
-        _log "Publishing failed..."
-        exit $EPUBLISH_FAILED
-    fi
-    $etcdctl set $ns/$img_name/dockerId $img_id 2>&1 >/dev/null
-    if [ "$?" != "0" ]; then
-        _log "Publishing failed..."
-        exit $EPUBLISH_FAILED
-    fi
 }
 
 # Native implementation of URLEncode, taken from <https://gist.github.com/cdown/1163649>.
@@ -228,48 +233,79 @@ build_image() {
     local repo_url=$2
     local tmp_dir="${3:-/tmp}/$(_urlencode $name)"
 
+    docker_img_id=$(_get_docker_image_id $name)
+    etcd_img_id=$(_get_build_image_id $etcd_ns $name)
+    if [ -z "$docker_img_id" ] || [ "$docker_img_id" != "$etcd_img_id" ]; then
+        _log "Image ($name) not yet build, or out of date, starting one..."
+    else
+        _log "Image ($name) is up to date..."
+        return
+    fi
+
+    # Ensure we've got a place to store information about this build...
+    _etcd_create_dir $etcd_ns $img_name
+
+    local old_pwd=$PWD
     if [ -d $tmp_dir ]; then
         # Repository already exists, update it...
         cd $tmp_dir
-        $git remote update >/dev/null 2>&1
-        changed=$($git status -uno | grep behind)
-        if [ -z "$changed" ]; then
-            _log "No changes in for $name in $tmp_dir..."
-        else
+        git remote update >/dev/null 2>&1
+        remote_rev=$(_get_git_rev "origin")
+        local_rev=$(_get_git_rev "master")
+        if [ "$remote_rev" != "$local_rev" ]; then
             _log "Pulling latest changes for $name in $tmp_dir..."
-            $git pull >/dev/null 2>&1
+            git pull origin master >/dev/null 2>&1
+        else
+            _log "Repository exist, but has no pending changes for $name in $tmp_dir..."
         fi
-        cd - >/dev/null 2>&1
     else
         _log "Cloning $name to $tmp_dir..."
         # Repository does not exist, clone it...
-        $git clone --depth=1 $repo_url $tmp_dir >/dev/null 2>&1
+        git clone --depth=1 $repo_url $tmp_dir >/dev/null 2>&1
+        # Determine the current revision...
+        cd $tmp_dir
+        remote_rev=$(_get_git_rev "origin")
     fi
+    cd $old_pwd
 
+    # Some additional sanity checks...
     if [ $? != 0 ]; then
         _log "Cloning/updating Git repository failed [$?]..."
         exit $EREPO_CLONE_FAILED
     fi
-
     if [ ! -f "$tmp_dir/Dockerfile" ]; then
         _log "No Dockerfile found, cannot build image!"
         exit $ENO_DOCKER_REPO
     fi
 
-    # Replace the "macros" in the Dockerfile...
-    _replace_apt_cacher "$tmp_dir/Dockerfile"
-    _replace_jdk_location "$tmp_dir/Dockerfile"
+    # Fetch the last Git rev from Etcd, might another builder instance already be building it?
+    local etcd_git_rev=$(_etcd_get $etcd_ns "$name/gitRev")
 
-    _log "Building image $name, this can take a little while..."
+    if [ "$remote_rev" != "$etcd_git_rev" ] || [ "$docker_img_id" != "$etcd_img_id" ]; then
+        # Build it!
+        _etcd_set $etcd_ns "$name/gitRev" $remote_rev
+        _etcd_set $etcd_ns "$name/gitRepo" $repo_url
 
-    result=$($docker build -q -t $name $tmp_dir 2>&1 | grep 'Successfully built ' | awk '{print $3}')
-    if [ $? != 0 ]; then
-        _log "Building image ($name) failed!"
-        exit $EBUILD_FAILURE
+        # Replace the "macros" in the Dockerfile...
+        _replace_apt_cacher "$tmp_dir/Dockerfile"
+        _replace_jdk_location "$tmp_dir/Dockerfile"
+
+        _log "Building image $name, this can take a little while..."
+
+        docker build -q -t $name $tmp_dir >/dev/null 2>&1
+        if [ $? != 0 ]; then
+            _log "Building image ($name) failed!"
+            exit $EBUILD_FAILURE
+        fi
+        # Fetch the *full* image ID for this image
+        local img_id=$(_get_docker_image_id $name)
+
+        _etcd_set $etcd_ns "$name/dockerId" "$img_id"
+
+        _log "Image ($name) build successfully with ID $img_id!"
+    else
+        _log "Image ($name) already build or is currently build by another service..."
     fi
-
-    _log "Image ($name) build successfully with ID $result!"
-    _publish_build_image $etcd_ns $name $repo_url $result
 }
 
 ###
@@ -281,17 +317,19 @@ init_etcd $etcd_ns
 
 case $command in
     build)
-        result=$(_get_build_image $etcd_ns $img_name)
-        if [ -z "$result" ]; then
-            _log "Image ($img_name) not yet build, starting one..."
-        fi
         build_image $img_name $git_repo_url
-        ;;
+    ;;
+    update)
+        images=$(etcdctl ls $etcd_ns 2>/dev/null)
+        for image in ${images[@]}; do
+            gitUrl=$(etcdctl get "$image/gitRepo")
+            _log "Updating $image from $gitUrl..."
+            build_image ${image/$etcd_ns\//} $gitUrl
+        done
+    ;;
     list)
         _get_build_images $etcd_ns
-        ;;
+    ;;
 esac
 
-
-cd $oldpwd
 exit 0
