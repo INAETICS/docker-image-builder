@@ -193,7 +193,7 @@ docker/push_image () {
         echo "docker/push_image: Pushing image to host: $imgspec" >&2
         docker push $imgspec >/dev/null 2>&1
         if [ $? -eq 0 ]; then
-            echo "docker/pull_image: Sucessfully pushed image: $imgspec" >&2
+            echo "docker/push_image: Sucessfully pushed image: $imgspec" >&2
             return 0
         fi
     done
