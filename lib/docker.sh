@@ -3,16 +3,16 @@
 # (C) 2014 INAETICS, <www.inaetics.org> - Apache License v2.
 
 docker/_list_images () {
-  docker images | awk '{if(NR>1)print $1":"$2}'
+    docker images | awk '{if(NR>1)print $1":"$2}'
 }
 
 docker/_ping_repo() {
-  local host=$1
-  local resp=$(curl --connect-timeout 1 $host/v1/_ping 2>/dev/null)
-  if [ $? -gt 0 ] || [ ! "$resp" == "true" ]; then
-    return 1
-  fi
-  return 0
+    local host=$1
+    local resp=$(curl --connect-timeout 1 $host/v1/_ping 2>/dev/null)
+    if [ $? -gt 0 ] || [ "$resp" != "true" ]; then
+        return 1
+    fi
+    return 0
 }
 
 docker/_parse_repo () {
@@ -43,7 +43,7 @@ docker/_parse_repo () {
         user="${parts[1]}"
         nametag="${parts[2]}"
     else
-        echo "docker/_parse_repo: repo parameter invalid: $repo" >&2
+        echo "Invalid repository parameter: $repo!" >&2
         return 1
     fi
 
@@ -60,8 +60,8 @@ docker/_parse_repo () {
 
 docker/_get_image_spec () {
     local repo=($(docker/_parse_repo $1))
-    if [ $? != 0 ]; then
-        return 1;
+    if [ $? -ne 0 ]; then
+        return 1
     fi
 
     local hosts=($2)
@@ -97,13 +97,16 @@ docker/get_image_id () {
 #   returns: the full image name.
 docker/find_image () {
     local repo=($(docker/_parse_repo $1))
-    if [ $? -gt 0 ]; then return 1; fi
+    if [ $? -gt 0 ]; then
+        return 1
+    fi
+
     local images=($(docker/_list_images))
     for image in "${images[@]}"; do
-        local parsed; parsed=($(docker/_parse_repo ${image}))
+        local parsed=($(docker/_parse_repo ${image}))
         if [ "${repo[1]}" == "${parsed[1]}" ] \
-               && [ "${repo[2]}" == "${parsed[2]}" ] \
-               && [ "${repo[3]}" == "${parsed[3]}" ]; then
+             && [ "${repo[2]}" == "${parsed[2]}" ] \
+             && [ "${repo[3]}" == "${parsed[3]}" ]; then
             echo "${image}"
             return 0
         fi
@@ -115,7 +118,10 @@ docker/find_image () {
 #
 docker/find_images () {
     local repo=($(docker/_parse_repo $1))
-    if [ $? -gt 0 ]; then return 1; fi
+    if [ $? -gt 0 ]; then
+        return 1
+    fi
+
     local images=($(docker/_list_images))
     for image in "${images[@]}"; do
         local parsed=($(docker/_parse_repo ${image}))
@@ -145,7 +151,9 @@ docker/find_images () {
 docker/tag () {
     local img_id=$1
     local spec=($(docker/_get_image_spec ${@:2}))
-    if [ $? -gt 0 ]; then return 1; fi
+    if [ $? -gt 0 ]; then
+        return 1
+    fi
 
     local imgpath=${spec[0]}
     local hosts=(${spec[1]})
@@ -155,10 +163,10 @@ docker/tag () {
         if [ "${host}" == "central" ]; then
             imgspec="$imgpath"
         fi
-        printf "docker/tag: Tagging image %.12s to %s\n" $img_id $imgspec >&2
-        docker tag $img_id $imgspec
-        if [ $? != 0 ]; then
-            echo "docker/tag: failed to tag $imgspec" >&2
+        echo "Tagging image ${img_id:0:12} to $imgspec..." >&2
+        docker tag $img_id $imgspec >/dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "Tagging $imgspec failed [$?]!" >&2
             return 1
         fi
     done
@@ -179,7 +187,9 @@ docker/tag () {
 #
 docker/push_image () {
     local spec=($(docker/_get_image_spec $@))
-    if [ $? -gt 0 ]; then return 1; fi
+    if [ $? -gt 0 ]; then
+        return 1
+    fi
 
     local imgpath=${spec[0]}
     local hosts=(${spec[1]})
@@ -190,14 +200,13 @@ docker/push_image () {
             imgspec="$imgpath"
         fi
 
-        echo "docker/push_image: Pushing image to host: $imgspec" >&2
+        echo "Pushing image $imgspec..." >&2
         docker push $imgspec >/dev/null 2>&1
-        if [ $? -eq 0 ]; then
-            echo "docker/push_image: Sucessfully pushed image: $imgspec" >&2
-            return 0
+        if [ $? -ne 0 ]; then
+            echo "Failed to push image: $imgspec [$?]!" >&2
         fi
     done
-    echo "docker/push_image: Done pushing: $repository" >&2
+    return 0
 }
 
 # Pull an image from any host
@@ -216,7 +225,9 @@ docker/push_image () {
 #
 docker/pull_image () {
     local spec=($(docker/_get_image_spec $@))
-    if [ $? -gt 0 ]; then return 1; fi
+    if [ $? -gt 0 ]; then
+        return 1
+    fi
 
     local imgpath=${spec[0]}
     local hosts=(${spec[1]})
@@ -226,16 +237,19 @@ docker/pull_image () {
         if [ "${host}" == "central" ]; then
             imgspec="$imgpath"
         fi
-        echo "docker/pull_image: Pulling image from host: $imgspec" >&2
+
+        echo "Pulling image: $imgspec..." >&2
         docker pull $imgspec >/dev/null 2>&1
         if [ $? -eq 0 ]; then
-            echo "docker/pull_image: Sucessfully pulled image: $imgspec" >&2
             echo $imgspec
             return 0
+        else
+            echo "Failed to pull image: $imgspec [$?]!" >&2
         fi
     done
 
-    echo "docker/pull_image: Failed to pull image from any repository" >&2
+    echo "Failed to pull image from any repository" >&2
     return 1
 }
 
+###EOF###
