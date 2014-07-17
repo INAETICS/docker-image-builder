@@ -5,7 +5,7 @@ require 'fileutils'
 Vagrant.require_version ">= 1.6.0"
 
 $instance_name="image-builder-service"
-$instance_ip="172.17.8.202"
+$instance_ip="172.17.8.130"
 
 $coreos_channel="coreos-alpha"
 $coreos_version=">= 361.0.0"
