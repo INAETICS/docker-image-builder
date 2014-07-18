@@ -67,7 +67,7 @@ docker/_get_image_spec () {
         return 1
     fi
 
-    local hosts=($2)
+    local hosts=(${@:2})
     local host=${repo[0]}
     local user=${repo[1]}
     local name=${repo[2]}
@@ -83,7 +83,7 @@ docker/_get_image_spec () {
         imgpath="$name:$tag"
     fi
 
-    echo "$imgpath $hosts"
+    echo "$imgpath ${hosts[@]}"
 }
 
 # Returns the image ID from Docker
@@ -162,7 +162,7 @@ docker/tag () {
     fi
 
     local imgpath=${spec[0]}
-    local hosts=(${spec[1]})
+    local hosts=(${spec[@]:1})
 
     for host in ${hosts[@]}; do
         local imgspec="$host/$imgpath"
@@ -199,7 +199,7 @@ docker/push_image () {
     fi
 
     local imgpath=${spec[0]}
-    local hosts=(${spec[1]})
+    local hosts=(${spec[@]:1})
 
     for host in ${hosts[@]}; do
         local imgspec="$host/$imgpath"
@@ -238,7 +238,7 @@ docker/pull_image () {
     fi
 
     local imgpath=${spec[0]}
-    local hosts=(${spec[1]})
+    local hosts=(${spec[@]:1})
 
     for host in ${hosts[@]}; do
         local imgspec="$host/$imgpath"
