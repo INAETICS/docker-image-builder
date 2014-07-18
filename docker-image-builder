@@ -238,6 +238,9 @@ build_image () {
         docker/push_image $name "$docker_repos"
 
         _log "Image ($name) build successfully with ID ${img_id:0:12}!"
+
+        # Returns the image ID
+        echo $img_id
     else
         # Make sure to push the latest image to all repositories, let Docker figure
         # out whether it needs to update stuff or not...
