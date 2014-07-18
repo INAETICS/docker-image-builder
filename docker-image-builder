@@ -244,6 +244,7 @@ build_image () {
     else
         # Make sure to push the latest image to all repositories, let Docker figure
         # out whether it needs to update stuff or not...
+        docker/tag $docker_img_id $name "$docker_repos"
         docker/push_image $name "$docker_repos"
 
         _log "Image ($name) already build or is currently build by another service..."
