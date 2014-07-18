@@ -153,6 +153,7 @@ docker/find_images () {
 # docker/tag inaetics/apt-cacher-service 172.17.8.100:5000
 # docker/tag 172.17.8.100:5001/inaetics/apt-cacher-service "172.17.8.100:5002 central"
 #
+# FIXME incorrect examples.. img_id required and no input checks
 docker/tag () {
     local img_id=$1
     local spec
