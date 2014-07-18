@@ -41,7 +41,7 @@ Commands:
 }
 
 # Assume we're running a Docker repository locally, can be overridden...
-docker_repository=${DOCKER_REPOSITORY:-"localhost:5000"}
+docker_repos=${DOCKER_REPOSITORIES:-"localhost:5000"}
 
 # Fetch the arguments & check semantics
 command=$1
@@ -98,12 +98,19 @@ _get_git_rev () {
     git log --pretty=oneline -1 $branch 2>/dev/null | awk '{print $1}'
 }
 
+# Returns all build image names from Etcd.
+_get_build_image_names () {
+    local ns=$1
+
+    etcdctl ls "$ns" --recursive | grep gitRev | sed 's/\/gitRev$//'
+}
+
 # Provides a list of all images that were build.
 #   args: NS - the Etcd namespace to look for build images
 #   returns: <img name> <git URL> <docker ID>
-_get_build_images () {
+_list_build_images () {
     local ns=$1
-    local imgs=($(etcd/keys "$ns" 2>&1))
+    local imgs=($(_get_build_image_names $ns))
     printf "%-25s %-12s %-12s %s\n" "REPOSITORY NAME" "IMAGE ID" "GIT REV" "GIT URL"
     for img in ${imgs[@]}; do
         local gitRev=$(etcd/value "$img/gitRev" | tr -d "\"")
@@ -226,14 +233,15 @@ build_image () {
 
         etcd/put "$etcd_ns/$name/dockerId" "$img_id"
 
-        # Tag & publish the image to Docker repository...
-        docker/tag $img_id $name $docker_repository
-        docker/push_image $name $docker_repository
+        # Tag & publish the image to all repositories...
+        docker/tag $img_id $name "$docker_repos"
+        docker/push_image $name "$docker_repos"
 
         _log "Image ($name) build successfully with ID ${img_id:0:12}!"
     else
-        # Make sure to pull the latest image...
-        docker/pull_image $name $docker_repository
+        # Make sure to push the latest image to all repositories, let Docker figure
+        # out whether it needs to update stuff or not...
+        docker/push_image $name "$docker_repos"
 
         _log "Image ($name) already build or is currently build by another service..."
     fi
@@ -251,7 +259,7 @@ case $command in
         build_image $img_name $git_repo_url
     ;;
     update)
-        images=$(etcd/keys $etcd_ns)
+        images=$(_get_build_image_names $etcd_ns)
         for image in ${images[@]}; do
             gitUrl=$(etcd/value "$image/gitRepo")
             _log "Updating $image from $gitUrl..."
@@ -259,7 +267,7 @@ case $command in
         done
     ;;
     list)
-        _get_build_images $etcd_ns
+        _list_build_images $etcd_ns
     ;;
 esac
 
