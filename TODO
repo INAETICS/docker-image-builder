@@ -6,4 +6,5 @@
 [X] Incorporate Docker bash library;
 [X] Incorporate Etcd bash library;
 [ ] Add support for branches other that 'master';
+[ ] Add debug logging;
 [ ] any other fix/feature...
