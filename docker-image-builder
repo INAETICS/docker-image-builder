@@ -199,6 +199,7 @@ build_image () {
     cd $old_pwd
 
     # Some additional sanity checks...
+    #FIXME this is not gonna work 
     if [ $? -ne 0 ]; then
         _log "Cloning/updating Git repository failed [$?]..."
         exit $EREPO_CLONE_FAILED
