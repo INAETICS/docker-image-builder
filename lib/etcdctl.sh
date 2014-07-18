@@ -16,16 +16,16 @@ etcd/keys () {
 
     local code
     local resp
-    if [ -n $peers ]; then
-        resp=($(etcdctl --peers "$peers" ls $key 2>/dev/null))
+    if [ -n "$peers" ]; then
+        resp=($(etcdctl --peers "$peers" ls $key 2>&1))
     else
-        resp=($(etcdctl ls $key 2>/dev/null))
+        resp=($(etcdctl ls $key 2>&1))
     fi
     if [ $? -eq 0 ]; then
         echo "${resp[@]}"
         return 0
     else
-        echo "Failed to get $key: ${resp[@]} [$?]!" >&2
+        echo "Failed to get '$key': ${resp[@]} [$?]!" >&2
         return 1
     fi
 }
@@ -42,7 +42,7 @@ etcd/value () {
     local peers=${2:-$ETCDCTL_PEERS}
 
     local resp
-    if [ -n $peers ]; then
+    if [ -n "$peers" ]; then
         resp=$(etcdctl --peers "$peers" get $key 2>/dev/null)
     else
         resp=$(etcdctl get $key 2>/dev/null)
@@ -95,7 +95,7 @@ etcd/put () {
     local value=$2
     local peers=${3:-$ETCDCTL_PEERS}
 
-    if [ -n $peers ]; then
+    if [ -n "$peers" ]; then
         etcdctl --peers "$peers" set "$key" "$value" >/dev/null 2>&1
     else
         etcdctl set "$key" "$value" >/dev/null 2>&1
@@ -132,4 +132,4 @@ etcd/mkdir () {
     fi
 }
 
-#etcd/values /inaetics/apt-cacher-service
+###EOF###

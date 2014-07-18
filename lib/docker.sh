@@ -8,7 +8,9 @@ docker/_list_images () {
 
 docker/_ping_repo() {
     local host=$1
-    local resp=$(curl --connect-timeout 1 $host/v1/_ping 2>/dev/null)
+
+    local resp
+    resp=$(curl --connect-timeout 1 $host/v1/_ping 2>/dev/null)
     if [ $? -gt 0 ] || [ "$resp" != "true" ]; then
         return 1
     fi
@@ -59,7 +61,8 @@ docker/_parse_repo () {
 }
 
 docker/_get_image_spec () {
-    local repo=($(docker/_parse_repo $1))
+    local repo
+    repo=($(docker/_parse_repo $1))
     if [ $? -ne 0 ]; then
         return 1
     fi
@@ -96,7 +99,8 @@ docker/get_image_id () {
 #   args: IMG_NAME - the (partial) name of the image to find.
 #   returns: the full image name.
 docker/find_image () {
-    local repo=($(docker/_parse_repo $1))
+    local repo
+    repo=($(docker/_parse_repo $1))
     if [ $? -gt 0 ]; then
         return 1
     fi
@@ -117,7 +121,8 @@ docker/find_image () {
 # Return list of matching images
 #
 docker/find_images () {
-    local repo=($(docker/_parse_repo $1))
+    local repo
+    repo=($(docker/_parse_repo $1))
     if [ $? -gt 0 ]; then
         return 1
     fi
@@ -150,7 +155,8 @@ docker/find_images () {
 #
 docker/tag () {
     local img_id=$1
-    local spec=($(docker/_get_image_spec ${@:2}))
+    local spec
+    spec=($(docker/_get_image_spec ${@:2}))
     if [ $? -gt 0 ]; then
         return 1
     fi
@@ -186,7 +192,8 @@ docker/tag () {
 # docker/push_image inaetics/apt-cacher-service 172.17.8.100:5000
 #
 docker/push_image () {
-    local spec=($(docker/_get_image_spec $@))
+    local spec
+    spec=($(docker/_get_image_spec $@))
     if [ $? -gt 0 ]; then
         return 1
     fi
@@ -224,7 +231,8 @@ docker/push_image () {
 # docker/pull_image 172.17.8.100:5001/inaetics/apt-cacher-service "172.17.8.100:5002 central"
 #
 docker/pull_image () {
-    local spec=($(docker/_get_image_spec $@))
+    local spec
+    spec=($(docker/_get_image_spec $@))
     if [ $? -gt 0 ]; then
         return 1
     fi
