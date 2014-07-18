@@ -140,14 +140,15 @@ _urlencode () {
 _replace_apt_cacher () {
     local file=$1
 
-    local value=$(etcd/value "inaetics/apt-cacher-service")
-    if [ -z "$value" ]; then
-        _log "Cannot replace APT_CACHER macro: no replacement value given!"
-        return
+    local services=($(etcd/values "inaetics/apt-cacher-service"))
+    if [ ${#services[@]} -eq 0 ]; then
+         _log "Cannot replace APT_CACHER macro: no services available!"
+     else
+         _log "Injecting APT CACHER service: ${services[0]}"
+         local value="RUN echo \"Acquire::http::Proxy \\\\\"http://${services[0]}\\\\\";\" \
+            >/etc/apt/apt.conf.d/01proxy"
+         sed -i "/##APT_PROXY/ c\\$value" $file
     fi
-    value="RUN echo \"Acquire::http::Proxy \\\\\"http://${value}\\\\\";\" >/etc/apt/apt.conf.d/01proxy"
-    # Do the actual replacement...
-    sed -i "/##APT_PROXY/ c\\$value" $file
 }
 
 # Does a search-and-replace for the '##JDK_LOCATION' placeholder
