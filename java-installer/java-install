@@ -1,0 +1,30 @@
+#!/bin/bash
+
+PWD=`pwd`
+cd $(dirname $0)
+
+source java-settings
+
+WORK_DIR="$JDK_NAME"
+mkdir $WORK_DIR
+
+if [ ! -f "$JDK_ARCHIVE" ]; then
+  curl -L -C - -b "oraclelicense=accept-securebackup-cookie" -o $JDK_ARCHIVE $JDK_LOCATION
+fi
+
+tar zxf $JDK_ARCHIVE -C $WORK_DIR --strip-components=1
+chown -R root.root $WORK_DIR
+
+if [ ! -d "/usr/lib/jvm" ]; then mkdir /usr/lib/jvm; fi
+if [ -d "/usr/lib/jvm/$JDK_NAME" ]; then rm -Rf /usr/lib/jvm/$JDK_NAME; fi; mkdir /usr/lib/jvm/$JDK_NAME
+
+mv $WORK_DIR/* /usr/lib/jvm/$JDK_NAME
+cp $JDK_JINFO /usr/lib/jvm/.$JDK_JINFO
+
+update-alternatives --install "/usr/bin/java" "java" "/usr/lib/jvm/$JDK_NAME/bin/java" 1;
+update-alternatives --install "/usr/bin/javac" "javac" "/usr/lib/jvm/$JDK_NAME/bin/java" 1;
+update-alternatives --install "/usr/bin/javaws" "javaws" "/usr/lib/jvm/$JDK_NAME/bin/java" 1;
+
+update-java-alternatives -s $JDK_NAME
+
+cd $PWD

@@ -2,263 +2,206 @@
 #
 # (C) 2014 INAETICS, <www.inaetics.org> - Apache License v2.
 
-docker/_list_images () {
-    docker images | awk '{if(NR>1)print $1":"$2}'
-}
-
-docker/_ping_repo() {
-    local host=$1
-
-    local resp
-    resp=$(curl --connect-timeout 1 $host/v1/_ping 2>/dev/null)
-    if [ $? -gt 0 ] || [ "$resp" != "true" ]; then
-        return 1
-    fi
-    return 0
-}
-
-docker/_parse_repo () {
-    local repo=$1
-    local parts=(${repo//\// })
-    local host; local user; local nametag; local name; local tag
-
-    if [ ${#parts[@]} -eq 1 ]; then
-        host="central"
-        user="root"
-        nametag="${parts[0]}"
-    elif [ ${#parts[@]} -eq 2 ]; then
-        # No clue how to distinguish between the two. Seens Docker itself
-        # also tries a ping. Obviously this will fail when a host is no
-        # longer available...
-        docker/_ping_repo ${parts[0]}
-        if [ $? -eq 0 ]; then
-            host="${parts[0]}"
-            user="root"
-            nametag="${parts[1]}"
-        else
-            host="central"
-            user="${parts[0]}"
-            nametag="${parts[1]}"
-        fi
-    elif [ ${#parts[@]} -eq 3 ]; then
-        host="${parts[0]}"
-        user="${parts[1]}"
-        nametag="${parts[2]}"
-    else
-        echo "Invalid repository parameter: $repo!" >&2
-        return 1
-    fi
-
-    if [[ $nametag =~ : ]]; then
-        name="${nametag//:*/}"
-        tag="${nametag//*:/}"
-    else
-        name="$nametag"
-        tag="latest"
-    fi
-
-    echo "$host $user $name $tag"
-}
-
-docker/_get_image_spec () {
-    local repo
-    repo=($(docker/_parse_repo $1))
-    if [ $? -ne 0 ]; then
-        return 1
-    fi
-
-    local hosts=(${@:2})
-    local host=${repo[0]}
-    local user=${repo[1]}
-    local name=${repo[2]}
-    local tag=${repo[3]}
-
-    if [ ! "${host}" == "central" ]; then
-        hosts=( ${hosts[@]/${host}/} )
-        hosts=( "${host}" "${hosts[@]}" )
-    fi
-
-    local imgpath="$user/$name:$tag"
-    if [ "${user}" == "root" ]; then
-        imgpath="$name:$tag"
-    fi
-
-    echo "$imgpath ${hosts[@]}"
-}
-
-# Returns the image ID from Docker
-#   args: IMG_NAME - the name of the image to fetch the ID for.
-#   returns: the full image ID.
-docker/get_image_id () {
-    local img_name=$1
-
-    docker inspect --format='{{.Id}}' $img_name 2>/dev/null
-}
-
-# Return first matching image (if any)
-#   args: IMG_NAME - the (partial) name of the image to find.
-#   returns: the full image name.
-docker/find_image () {
-    local repo
-    repo=($(docker/_parse_repo $1))
-    if [ $? -gt 0 ]; then
-        return 1
-    fi
-
-    local images=($(docker/_list_images))
-    for image in "${images[@]}"; do
-        local parsed=($(docker/_parse_repo ${image}))
-        if [ "${repo[1]}" == "${parsed[1]}" ] \
-             && [ "${repo[2]}" == "${parsed[2]}" ] \
-             && [ "${repo[3]}" == "${parsed[3]}" ]; then
-            echo "${image}"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# Return list of matching images
+# Tests if a repo is alive
 #
-docker/find_images () {
-    local repo
-    repo=($(docker/_parse_repo $1))
-    if [ $? -gt 0 ]; then
-        return 1
-    fi
+# This method is also used to determin whether a part of a
+# tag refers to a repository so expect dns errors.
+#  args: $1 - <repository>
+#  return: 0, if the ping succeeds
+#    1, if the ping fails
+docker/_ping_repo() {
+  _dbg "-> $FUNCNAME - args: $@"
+  local resp=$(curl --connect-timeout 1 $1/v1/_ping 2>/dev/null)
+  if [ "$resp" != "true" ]; then
+    _dbg "-> $FUNCNAME - ping failed"
+    return 1
+  fi
+  _dbg "-> $FUNCNAME - ping ok"
+  return 0
+}
 
-    local images=($(docker/_list_images))
-    for image in "${images[@]}"; do
-        local parsed=($(docker/_parse_repo ${image}))
-        if [ "${repo[1]}" == "${parsed[1]}" ] \
-             && [ "${repo[2]}" == "${parsed[2]}" ] \
-             && [ "${repo[3]}" == "${parsed[3]}" ]; then
-            echo "${image}"
-        fi
-    done
+# Parse a nametag
+#
+# Basically a split on :, but if the actual tag is missing
+# it defaults to latest.
+#  args: $1 - nametag, <name>[:<tag>]
+#  echo: <name> <tag>, if success
+#  return: 0, if success
+#     1, if fail
+docker/_parse_nametag () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local parts=(${1//:/ })
+  local result
+  if [ ${#parts[@]} -eq 2 ]; then
+    result="${parts[0]} ${parts[1]}"
+  elif [ ${#parts[@]} -eq 1 ]; then
+    result="${parts[0]} latest"
+  fi
+  _dbg "-> $FUNCNAME - result: $result"
+  echo $result
+}
+
+# Parse a docker repository string into something sensible
+#   args: $1 - <repository>, [<host>/][<user>/]<name>[:<tag>]
+#   echo: <host> <user> <name> <tag>
+#   return: 0, if success
+#     1, if fail
+docker/_parse_repo () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local parts=(${1//\// })
+  local result
+  if [ ${#parts[@]} -eq 1 ]; then
+    result="central root $(docker/_parse_nametag ${parts[0]})"
+  elif [ ${#parts[@]} -eq 2 ]; then
+    # No clue how to distinguish between the two. Seens Docker itself
+    # also tries a ping. Obviously this will fail when a host is no
+    # longer available...
+    docker/_ping_repo ${parts[0]}
+    if [ $? -eq 0 ]; then
+      result="${parts[0]} root $(docker/_parse_nametag ${parts[1]})"
+    else
+      result="central ${parts[0]} $(docker/_parse_nametag ${parts[1]})"
+    fi
+  elif [ ${#parts[@]} -eq 3 ]; then
+    result="${parts[0]} ${parts[1]} $(docker/_parse_nametag ${parts[2]})"
+  else
+    _log "Invalid repository parameter: $1"
+    return 1
+  fi
+  _dbg "-> $FUNCNAME - result: $result"
+  echo $result
+}
+
+# Parse an image name out of a repository string 
+#   args: $1 - <repository>, [<host>/][<user>/]<name>[:<tag>]
+#   echo: [<user>/]<name>:<tag>
+#   return: 0, if success
+#     1, if fail
+docker/_parse_name () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local repo=($(docker/_parse_repo $1))
+  if [ ${#repo[@]} -ne 4 ]; then
+    _log "Failed to parse repo $1"
+    return 1
+  fi
+  _dbg "-> $FUNCNAME - repo: ${repo[@]}"
+  if [ "${repo[1]}" != "root" ]; then
+    result="${repo[1]}/${repo[2]}:${repo[3]}"
+  else
+    result="${repo[2]}:${repo[3]}"
+  fi
+  _dbg "-> $FUNCNAME - result: $result"
+  echo $result
+}
+
+# Create a new repository string from an 
+# repository string and a host.
+#   args: $1 - <image name>, [<host>/][<user>/]<name>[:<tag>];
+#     $2 - [host], may be nil for central
+#   echo:  [<host>/][<user>/]<name>[:<tag>];
+#   return: 0, if success
+#     1, if fail
+docker/_get_repo () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local spec=$(docker/_parse_name $1)
+  local tag
+  if [ "$2" != "" ]; then
+     tag="$2/$spec"
+  else
+     tag="$spec"
+  fi
+  _dbg "-> $FUNCNAME - tag: $tag"
+  echo $tag
+}
+
+# Returns the image id for a name
+#   args: $1 - <name>
+#   echo: <imageid>
+#   return: 0, if success
+#     1, if fail
+docker/get_image_id () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local result=$(docker inspect --format='{{.Id}}' $1 2>/dev/null)
+  if [ "$result" != "" ]; then
+    _dbg "-> $FUNCNAME - image found: $result"
+    echo $result
     return 0
+  fi
+  _dbg "-> $FUNCNAME - image not found"
+  return 1
+}
+
+# Returns the image name that for an id
+#
+# If multiple images match the same id the first is returned
+#   args: $1 - <image id>
+#   echo: <name>
+#   return: 0, if found
+#     1, if not found
+docker/get_image_name () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local images=($(docker images --no-trunc | grep $1 | awk '{print $1":"$2}'))
+  if [ ${#images} -gt 0 ]; then
+    _dbg "-> $FUNCNAME - image name: ${images[0]}"
+    echo "${images[0]}"
+    return 0
+  fi
+  _dbg "-> $FUNCNAME - image not found"
+  return 1
 }
 
 # Tags an image to a registry.
 #
 # If the repo contains a host it will be included in the hosts. Use
 # "central" to pull from the Docker Index.
-#   args: IMG_ID - the image ID to tag;
-#         REPO - the registry specification [<host>/][<user>/]<name>[:<tag>];
-#         HOST - the registry hosts [<host>[ <host>]].
-#
-# examples:
-#
-# docker/tag 172.17.8.100:5000/inaetics/apt-cacher-service
-# docker/tag inaetics/apt-cacher-service 172.17.8.100:5000
-# docker/tag 172.17.8.100:5001/inaetics/apt-cacher-service "172.17.8.100:5002 central"
-#
-# FIXME incorrect examples.. img_id required and no input checks
-docker/tag () {
-    local img_id=$1
-    local spec
-    spec=($(docker/_get_image_spec ${@:2}))
-    if [ $? -gt 0 ]; then
-        return 1
-    fi
-
-    local imgpath=${spec[0]}
-    local hosts=(${spec[@]:1})
-
-    for host in ${hosts[@]}; do
-        local imgspec="$host/$imgpath"
-        if [ "${host}" == "central" ]; then
-            imgspec="$imgpath"
-        fi
-        echo "Tagging image ${img_id:0:12} to $imgspec..." >&2
-        docker tag $img_id $imgspec >/dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            echo "Tagging $imgspec failed [$?]!" >&2
-            return 1
-        fi
-    done
+#   args: $1 - <image id>
+#     $2 - <image name>
+#     $3 - <registry host>, may be nil
+docker/tag_image () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local tag=$(docker/_get_repo $2 $3)
+  _dbg "-> $FUNCNAME - tag: $tag"
+  _call docker tag $1 $tag
+  echo $tag
 }
 
-# Push an image to all hosts
+# Push an image to a registry
 #
-# If the repo contains a host it will be included in the hosts. Use
-# "central" to push to the Docker Index.
-#
-# param repo  : [<host>/][<user>/]<name>[:<tag>]
-# param hosts : [<host>[ <host>]]
-#
-# examples:
-#
-# docker/push_image 172.17.8.100:5000/inaetics/apt-cacher-service
-# docker/push_image inaetics/apt-cacher-service 172.17.8.100:5000
-#
+# Because we can only push tags this function
+# will call docker_tag_image first.
+#   args: $1 - <image id>
+#     $2 - <image name>
+#     $3 - <registry host>
 docker/push_image () {
-    local spec
-    spec=($(docker/_get_image_spec $@))
-    if [ $? -gt 0 ]; then
-        return 1
+  _dbg "-> $FUNCNAME - args: $@"
+  local tag=$(docker/tag_image $1 $2 $3)
+  if [ $? -eq 0 ]; then
+    _call docker push $tag
+    if [ $? -eq 0 ]; then
+      _dbg "-> $FUNCNAME - pushed $tag"
+      echo $tag
+      return 0
     fi
-
-    local imgpath=${spec[0]}
-    local hosts=(${spec[@]:1})
-
-    for host in ${hosts[@]}; do
-        local imgspec="$host/$imgpath"
-        if [ "${host}" == "central" ]; then
-            imgspec="$imgpath"
-        fi
-
-        echo "Pushing image $imgspec..." >&2
-        docker push $imgspec >/dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            echo "Failed to push image: $imgspec [$?]!" >&2
-        fi
-    done
-    return 0
+  fi
+  return 1
 }
 
-# Pull an image from any host
+# Pull an image from a registry
 #
-# If the repo contains a host it will be included in the hosts. Use
-# "central" to pull from the Docker Index.
-
-# param repo  : [<host>/][<user>/]<name>[:<tag>]
-# param hosts : [<host>[ <host>]]
-#
-# examples:
-#
-# docker/pull_image 172.17.8.100:5000/inaetics/apt-cacher-service
-# docker/pull_image inaetics/apt-cacher-service 172.17.8.100:5000
-# docker/pull_image 172.17.8.100:5001/inaetics/apt-cacher-service "172.17.8.100:5002 central"
-#
+#   args: $1 - <image id>
+#     $2 - <image name>, [<host>/][<user>/]<name>[:<tag>];
+#     $3 - <registry host>
 docker/pull_image () {
-    local spec
-    spec=($(docker/_get_image_spec $@))
-    if [ $? -gt 0 ]; then
-        return 1
-    fi
+  _dbg "-> $FUNCNAME - args: $@"
 
-    local imgpath=${spec[0]}
-    local hosts=(${spec[@]:1})
-
-    for host in ${hosts[@]}; do
-        local imgspec="$host/$imgpath"
-        if [ "${host}" == "central" ]; then
-            imgspec="$imgpath"
-        fi
-
-        echo "Pulling image: $imgspec..." >&2
-        docker pull $imgspec >/dev/null 2>&1
-        if [ $? -eq 0 ]; then
-            echo $imgspec
-            return 0
-        else
-            echo "Failed to pull image: $imgspec [$?]!" >&2
-        fi
-    done
-
-    echo "Failed to pull image from any repository" >&2
-    return 1
+  local tag=$(docker/_get_repo $2 $3)
+  _dbg "-> $FUNCNAME - pulling: $tag"
+  _call docker pull $tag
+  if [ $? -eq 0 ]; then
+    echo $tag
+    return 0
+  fi
+  return 1
 }
 
 ###EOF###

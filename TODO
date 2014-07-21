@@ -1,10 +1,7 @@
-[X] Implement basic builder service that can build images using a predefined list of repositories;
-[X] Publish the available (build) images through Etcd;
-[X] Make the service a little more smarter by watching the repositories for changes, automatic rebuild of images;
-[X] Push the build images to Docker;
-[X] Rename repository to 'docker-image-builder';
-[X] Incorporate Docker bash library;
-[X] Incorporate Etcd bash library;
+[ ] Fix FIXMEs
+[ ] Rethink 'docker-image-builder' name, its a 'image registry service'
 [ ] Add support for branches other that 'master';
 [ ] Add debug logging;
+[ ] Add mirror support of common images such (eg. ubuntu:14.04)
+[ ] Add build support for mirrored images such (eg. FROM registry/ubuntu:14.04)
 [ ] any other fix/feature...

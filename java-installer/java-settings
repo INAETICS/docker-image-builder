@@ -1,0 +1,6 @@
+#!/bin/bash
+
+export JDK_NAME=java-8-oracle
+export JDK_JINFO="$JDK_NAME.jinfo"
+export JDK_ARCHIVE="jdk-8u5-linux-x64.tar.gz"
+export JDK_LOCATION="http://download.oracle.com/otn-pub/java/jdk/8u5-b13/jdk-8u5-linux-x64.tar.gz"

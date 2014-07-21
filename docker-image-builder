@@ -3,278 +3,309 @@
 #
 # (C) 2014 INAETICS, <www.inaetics.org> - Apache License v2.
 
-# Script return values
-readonly EOK=0
-readonly EINVALID_ARGS=1
-readonly EMISSING_COMMAND=2
-readonly ENO_DOCKER_REPO=3
-readonly EETCD_UNREACHABLE=4
-readonly EREPO_CLONE_FAILED=5
-readonly EBUILD_FAILURE=6
-readonly EPUBLISH_FAILED=7
-readonly EUNKNOWN_IMAGE=8
-# Local constants
-readonly builder_root="/tmp/image-builder"
-readonly etcd_ns="/inaetics/docker-image-builder"
+#FIXME configuration/environment
+#FIXME add a forced build
+#FIXME better input/error checking
+readonly BUILDER_ROOTDIR="/tmp/image-builder"
+readonly BUILDER_DEBUG="true"
+readonly REGISTRY_NAMESPACE="/inaetics/image-builder-registry"
 
-# External "libraries"
+#
+# Util functions 
+#
+
+# Wraps a function call to redirect or filter stdout/stderr
+# depending on the debug setting
+#   args: $@ - the wrapped call
+#   return: the wrapped call's return
+_call () {
+  if [ "$BUILDER_DEBUG" != "true"  ]; then
+    $@ &> /dev/null
+    return $?
+  else
+    $@ 2>&1 | awk '{print "[DEBUG] "$0}' >&2
+    return ${PIPESTATUS[0]}
+  fi
+}
+
+# Echo a debug message to stderr, perpending each line
+# with a debug prefix.
+#   args: $@ - the echo args
+_dbg() {
+  if [ "$BUILDER_DEBUG" == "true" ]; then
+    echo $@ | awk '{print "[DEBUG] "$0}' >&2
+  fi
+}
+
+# Echo a log message to stderr, perpending each line
+# with a info prefix.
+#   args: $@ - the echo args
+_log() {
+  echo $@ | awk '{print "[INFO] "$0}' >&2
+}
+
+# Translate an image name [<user>/]<repository>
+# into a one that can be used as an (etcd) dir.
+#   args: $@ - the name(s)
+_dirname () {
+  echo "$@" | tr '/' '_'
+}
+
+#
+# Supporting libs
+#
+
+source "$(dirname $0)/lib/builder.sh"
 source "$(dirname $0)/lib/docker.sh"
 source "$(dirname $0)/lib/etcdctl.sh"
 
-_log() {
-    echo $@ >&2
+#
+# Core functions
+#
+
+# Determine the repository directory to use for a specific 
+# image name; [<user>/]<repository>
+#  args: $1, <name>
+#  echo: <dir>
+_get_repository_dir () {
+  #FIXME check input
+  _dbg "-> $FUNCNAME - args: $@"
+  if [ ! -d "${BUILDER_ROOTDIR}/repos" ]; then
+    _call mkdir ${BUILDER_ROOTDIR}/repos
+  fi
+  local dir=${BUILDER_ROOTDIR}/repos/$(_dirname $1)
+  _dbg "-> $FUNCNAME - dir: $dir"
+  echo $dir
 }
 
-_show_usage() {
-    echo "Usage: $(basename $0) COMMAND [arg...]
-
-Commands:
-  build REPO_NAME GIT_REPO_URL
-     builds a new or updates an existing Docker image, pulling the repository from
-     the given Git repository URL and tagging it with the given REPO_NAME;
-  list
-     shows a list of all build images.
-  update
-     checks all previously build images and rebuild them if necessary.
-"
-    exit $EINVALID_ARGS
-}
-
-# Assume we're running a Docker repository locally, can be overridden...
-docker_repos=${DOCKER_REPOSITORIES:-"localhost:5000"}
-
-# Fetch the arguments & check semantics
-command=$1
-
-if [ "$command" == "build" ]; then
-    # Needs two additional arguments
-    img_name=$2
-    git_repo_url=$3
-
-    if [ -z $img_name ] || [ -z $git_repo_url ]; then
-        _show_usage
-    fi
-elif [ "$command" != "list" ] && [ "$command" != "update" ]; then
-    _show_usage
-fi
-
-# We depend on Etcd, Git and Docker, so lets verify we can use those...
-missing=0
-for cmd in etcdctl git docker; do
-    if ! hash "$cmd" >/dev/null 2>&1; then
-        _log "Command $cmd not found in PATH! Cannot run $(basename $0)!"
-        ((missing++))
-    fi
-done
-# Do not try to continue with this...
-if ((missing > 0)); then
-    exit $EMISSING_COMMAND
-fi
-
-# Try to invoke etcdctl, to see we can contact the Etcd node (or cluster)...
-etcdctl ls >/dev/null 2>&1
-if [ $? -ne 0 ]; then
-    _log "Unable to access Etcd, is it not running?!"
-    exit $EETCD_UNREACHABLE
-fi
-
-# Returns the image ID of an earlier build Docker image (from Etcd)
-#   args: NS - the Etcd namespace to look for build images;
-#         IMG_NAME - the name of the image to fetch the ID for.
-#   returns: the full image ID.
-_get_build_image_id () {
-    local ns=$1
-    local img_name=$2
-
-    etcd/value "$ns/$img_name/dockerId"
-}
-
-# Returns the current revision of a Git branch.
-#   args: BRANCH - the name of the branch to get the revision for.
-#   returns: the revision (or commit) hash.
-_get_git_rev () {
-    local branch=$1
-
-    git log --pretty=oneline -1 $branch 2>/dev/null | awk '{print $1}'
-}
-
-# Returns all build image names from Etcd.
-_get_build_image_names () {
-    local ns=$1
-
-    etcdctl ls "$ns" --recursive | grep gitRev | sed 's/\/gitRev$//'
+# Update a git repository by either cloning or pulling and returning
+# its master revision
+#  args: $1, <repository url>
+#   $2, <repository dir>
+#  echo: <revision>
+_update_git_repository () {
+  #FIXME check input
+  #git remote -v | grep origin | awk '{print $2}'
+  _dbg "-> $FUNCNAME - args: $@"
+  if [ -d "$2" ]; then
+    _dbg "-> $FUNCNAME - dir exists, pulling!"
+    cd $2
+    _call git pull
+  else
+    _dbg "-> $FUNCNAME - dir empty, cloning!"
+    _call git clone --depth=1 $1 $2
+  fi
+  local rev=$(git log --pretty=oneline -1 $branch | awk '{print $1}')
+  _dbg "$FUNCNAME - rev: $rev"
+  echo $rev
 }
 
 # Provides a list of all images that were build.
-#   args: NS - the Etcd namespace to look for build images
 #   returns: <img name> <git URL> <docker ID>
-_list_build_images () {
-    local ns=$1
-    local imgs=($(_get_build_image_names $ns))
-    printf "%-25s %-12s %-12s %s\n" "REPOSITORY NAME" "IMAGE ID" "GIT REV" "GIT URL"
-    for img in ${imgs[@]}; do
-        local gitRev=$(etcd/value "$img/gitRev" | tr -d "\"")
-        local gitUrl=$(etcd/value "$img/gitRepo" | tr -d "\"")
-        local dockerId=$(etcd/value "$img/dockerId" | tr -d "\"")
-        printf "%-25s %.12s %.12s %s\n" ${img/$ns\//} $dockerId $gitRev $gitUrl
-    done
+_list_registry_images () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local value
+  for image in $(etcd/keys $REGISTRY_NAMESPACE); do
+    value=$(etcd/value $image)
+    _dbg "-> $FUNCNAME - image: $value"
+   echo $value
+  done
 }
 
-# Native implementation of URLEncode, taken from <https://gist.github.com/cdown/1163649>.
-#   arg: URL - the URL/text to URL encode.
-#   returns: URL encoded text.
-_urlencode () {
-    local length="${#1}"
-    for (( i = 0; i < length; i++ )); do
-        local c="${1:i:1}"
-            case $c in
-                [a-zA-Z0-9.~_-]) printf "$c" ;;
-                *) printf '%%%02X' "'$c"
-            esac
-    done
+_update_registry_images () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local value; local array
+  for image in $(etcd/keys $REGISTRY_NAMESPACE); do
+    value=$(etcd/value $image)
+    _dbg "-> $FUNCNAME - image: $value"
+    array=($value)
+    build_image ${array[0]} ${array[3]}
+  done
 }
 
-# Does a search-and-replace for the '##APT_PROXY' placeholder
-#   args: FILE - the file to do the search-and-replace on.
-#   returns: nothing
-_replace_apt_cacher () {
-    local file=$1
+# Locate an image in the registry by name and matching repository
+# revision.
+#  args: $1: <repository name>, format [<user>/]<repository>
+#    $2: <repository revision>
+#  echo: <dockerid>
+#  return: 0, if image was found
+#    1, if image was not found
+_locate_registry_image () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local path="$REGISTRY_NAMESPACE/$(_dirname $1)"
+  _dbg "-> $FUNCNAME - path: $path"
+  local info=$(etcd/value $path)
+  _dbg "-> $FUNCNAME - info: $info"
+  if [ "${info}" == "" ]; then
+    _dbg "-> $FUNCNAME - image not found"
+  fi
+  local array=(${info//#/ })
+  if [ "${array[2]}" != "$2" ]; then  
+    _dbg "-> $FUNCNAME - image is old: ${array[2]} != $2"
+    return 1
+  fi
+  _dbg "-> $FUNCNAME - dockerid: ${array[1]}"
+  echo ${array[1]}
+}
 
-    local services=($(etcd/values "inaetics/apt-cacher-service"))
-    if [ ${#services[@]} -eq 0 ]; then
-         _log "Cannot replace APT_CACHER macro: no services available!"
-     else
-         _log "Injecting APT CACHER service: ${services[0]}"
-         local value="RUN echo \"Acquire::http::Proxy \\\\\"http://${services[0]}\\\\\";\" \
-            >/etc/apt/apt.conf.d/01proxy"
-         sed -i "/##APT_PROXY/ c\\$value" $file
+# Locate an image in the registry by name and matching repository
+# revision.
+#  args: $1: <repository name>, format [<user>/]<repository>
+#    $2..n: <image info> 
+_publish_registry_image () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local path="$REGISTRY_NAMESPACE/$(_dirname $1)"
+  _dbg "-> $FUNCNAME - path: $path"
+  local info=${@:2}
+  info=${info// /#}
+  _dbg "-> $FUNCNAME - info: $info"
+  etcd/put $path "$info"
+}
+
+# Push an image to available docker registries.
+#  args: $1: <image id>>
+#    $2: <image name> 
+_push_image_upstream () {
+  #FIXME if the image was pulled skip tagging pushing to origin
+  _dbg "-> $FUNCNAME - args: $@"
+  local registries=$(etcd/values /inaetics/docker-registry-service)
+  _dbg "-> $FUNCNAME - registries: $registries"
+  local res
+  for registry in $registries; do
+    res=$(docker/push_image $1 $2 $registry)
+    if [ ! "$res" == "" ]; then
+      _log "-> pushed $res"
     fi
+  done
 }
 
-# Does a search-and-replace for the '##JDK_LOCATION' placeholder
-#   args: FILE - the file to do the search-and-replace on.
-#   returns: nothing
-_replace_jdk_location () {
-    local file=$1
-
-    # TODO
+# Push an image to available docker registries.
+#  args: $1: <image id>>
+#    $2: <image name> 
+_pull_image_upstream() {
+  _dbg "-> $FUNCNAME - args: $@"
+  local registries=$(etcd/values /inaetics/docker-registry-service)
+  _dbg "-> $FUNCNAME - registries: $registries"
+  for registry in $registries; do
+    located_image_name=$(docker/pull_image $1 $2 $registry)
+    #FIXME consider imageid during pull so we know we did not pull an  old copy
+    located_image_name=$(docker/get_image_name $1)
+    if [ "$located_image_name" != "" ]; then
+      echo $located_image_name
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Builds a Docker image and publishes the results to Etcd
-#  args: NAME - the name of the image to build;
-#        REPO_URL - the Git repository URL of the image to build;
-#        TMP_DIR - the temporary directory to use for building the image.
-build_image () {
-    local name=$1
-    local repo_url=$2
-    local tmp_dir="${3:-$builder_root}/$(_urlencode $name)"
+#  args: $1: <repository name>, format [<user>/]<repository>
+#    $2 - <repository url>
+#FIXME rename to locate_image (?)
+locate_image () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local requested_image_name=$1
+  local repository_url=$2
+  local repository_dir=$(_get_repository_dir $requested_image_name)
+  local apt_cachers=($(etcd/values /inaetics/apt-cacher-service))
+  local docker_registries=$(etcd/values /inaetics/docker-registry-service)
 
-    docker_img_id=$(docker/get_image_id $name)
-    etcd_img_id=$(_get_build_image_id $etcd_ns $name)
+  _log "Locating image $requested_image_name"
+  _dbg "-> $FUNCNAME - url:  $repository_url"
+  _dbg "-> $FUNCNAME - dir:  $repository_dir"
 
-    # Ensure we've got a place to store information about this build...
-    etcd/mkdir $etcd_ns $img_name
+  _log "Updating repository from  $repository_url"
+  local repository_rev=$(_update_git_repository $repository_url $repository_dir)
+  _log "-> repository revision is $repository_rev"
 
-    local old_pwd=$PWD
-    if [ -d $tmp_dir ]; then
-        # Repository already exists, update it...
-        cd $tmp_dir
-        git remote update >/dev/null 2>&1
-        remote_rev=$(_get_git_rev "origin")
-        local_rev=$(_get_git_rev "master")
-        if [ "$remote_rev" != "$local_rev" ]; then
-            _log "Pulling latest changes for $name in $tmp_dir..."
-            git pull origin master >/dev/null 2>&1
-        else
-            _log "Repository exist, but has no pending changes for $name in $tmp_dir..."
-        fi
+  _log "Looking up image in registry"
+  local located_image_id=$(_locate_registry_image $requested_image_name $repository_rev)
+  if [ "$located_image_id" == "" ]; then
+    _log "-> no image found"
+  else
+    _log "-> found image: $located_image_id"
+  fi
+
+  local located_image_name
+  if [ "$located_image_id" != "" ]; then
+    _log "Checking for locally stored image"
+    located_image_name=$(docker/get_image_name $located_image_id)
+    if [ "$located_image_name" != "" ]; then
+      _log "-> found local image: $located_image_name"
+    else 
+      _log "-> no local image found"
+    fi
+  fi
+   
+  if [ "$located_image_id" != "" ] && [ "$located_image_name" == "" ]; then
+    _log "Checking for remotely available image"
+    located_image_name=$(_pull_image_upstream $located_image_id $requested_image_name)
+    if [ "$located_image_name" != "" ]; then
+      _log "-> pulled remote image: $located_image_name"
     else
-        _log "Cloning $name to $tmp_dir..."
-        # Repository does not exist, clone it...
-        git clone --depth=1 $repo_url $tmp_dir >/dev/null 2>&1
-        # Determine the current revision...
-        cd $tmp_dir
-        remote_rev=$(_get_git_rev "origin")
+      _log "-> no remote image found"
     fi
-    cd $old_pwd
+  fi 
 
-    # Some additional sanity checks...
-    #FIXME this is not gonna work 
-    if [ $? -ne 0 ]; then
-        _log "Cloning/updating Git repository failed [$?]..."
-        exit $EREPO_CLONE_FAILED
-    fi
-    if [ ! -f "$tmp_dir/Dockerfile" ]; then
-        _log "No Dockerfile found, cannot build image!"
-        exit $ENO_DOCKER_REPO
-    fi
+  if [ "$located_image_name" != "" ]; then
+    _log "Tagging located image name: $requested_image_name"
+    located_image_name=$(docker/tag_image $located_image_id $requested_image_name)
+  fi
 
-    # Fetch the last Git rev from Etcd, might another builder instance already be building it?
-    local etcd_git_rev=$(etcd/value "$etcd_ns/$name/gitRev")
+  if [ "$located_image_name" == "" ]; then
+    _log "Building image locally"
+    builder/build_image $requested_image_name $repository_dir ${apt_cachers[0]}
+    located_image_name=$requested_image_name
+    located_image_id=$(docker/get_image_id $located_image_name)
+  fi
 
-    if [ "$remote_rev" != "$etcd_git_rev" ] || [ "$docker_img_id" != "$etcd_img_id" ]; then
-        _log "Image ($name) not yet build or out of date, starting build..."
+  _log "Pushing image to docker registries"
+  _push_image_upstream $located_image_id $located_image_name
 
-        # Build it!
-        etcd/put "$etcd_ns/$name/gitRev" $remote_rev
-        etcd/put "$etcd_ns/$name/gitRepo" $repo_url
-
-        # Replace the "macros" in the Dockerfile...
-        _replace_apt_cacher "$tmp_dir/Dockerfile"
-        _replace_jdk_location "$tmp_dir/Dockerfile"
-
-        _log "Building image $name, this can take a little while..."
-
-        docker build -q -t $name $tmp_dir >/dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            _log "Building image ($name) failed!"
-            exit $EBUILD_FAILURE
-        fi
-        # Fetch the *full* image ID for this image
-        local img_id=$(docker/get_image_id $name)
-
-        etcd/put "$etcd_ns/$name/dockerId" "$img_id"
-
-        # Tag & publish the image to all repositories...
-        docker/tag $img_id $name "$docker_repos"
-        docker/push_image $name "$docker_repos"
-
-        _log "Image ($name) build successfully with ID ${img_id:0:12}!"
-
-        # Returns the image ID
-        echo $img_id
-    else
-        # Make sure to push the latest image to all repositories, let Docker figure
-        # out whether it needs to update stuff or not...
-        docker/tag $docker_img_id $name "$docker_repos"
-        docker/push_image $name "$docker_repos"
-
-        _log "Image ($name) already build or is currently build by another service..."
-    fi
+  _log "Publishing image in builder registry"
+  _publish_registry_image $requested_image_name $requested_image_name $located_image_id $repository_rev $repository_url
+  echo $located_image_id
 }
 
-###
-### MAIN
-###
+# Print the usage information for this script
+_usage() {
+  echo "Usage: $(basename $0) COMMAND [arg...]
 
-# Initialize the Etcd namespace...
-etcd/init $etcd_ns
+Commands:
+  locate REPO_NAME GIT_REPO_URL
+   builds a new or updates an existing Docker image, pulling the repository from
+   the given Git repository URL and tagging it with the given REPO_NAME;
+  list
+   shows a list of all build images.
+  update
+   checks all previously build images and rebuild them if necessary.
+"
+}
 
-case $command in
-    build)
-        build_image $img_name $git_repo_url
-    ;;
-    update)
-        images=$(_get_build_image_names $etcd_ns)
-        for image in ${images[@]}; do
-            gitUrl=$(etcd/value "$image/gitRepo")
-            _log "Updating $image from $gitUrl..."
-            build_image ${image/$etcd_ns\//} $gitUrl
-        done
-    ;;
-    list)
-        _list_build_images $etcd_ns
-    ;;
+#
+# Main
+#
+
+case $1 in
+  locate)
+    if [ -z $2 ] || [ -z $3 ]; then
+      _usage
+      exit 1
+    fi
+    locate_image $2 $3
+    exit $?
+  ;;
+  update)
+    _update_registry_images
+    exit $?
+  ;;
+  list)
+    printf "%-25s %-12s %-12s %s\n" "REPOSITORY NAME" "IMAGE ID" "GIT REV" "GIT URL"
+    _list_registry_images
+    exit $?
+  ;;
+  *)
+    _usage
+    exit 1
+  ;;
 esac
-
-exit 0
