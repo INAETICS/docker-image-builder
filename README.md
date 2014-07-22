@@ -1,4 +1,4 @@
-image-builder-service
+Image Builder Service
 =====================
 
 Provides a service to build Docker images automatically, given a repository

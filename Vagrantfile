@@ -34,7 +34,7 @@ Vagrant.configure("2") do |config|
     end
 
     # Provision with nfs
-    config.vm.synced_folder ".", "/tmp/image-builder-service", id: "image-builder-service", :nfs => true, :mount_options => ['nolock,vers=3,udp']
+    # config.vm.synced_folder ".", "/tmp/image-builder-service", id: "image-builder-service", :nfs => true, :mount_options => ['nolock,vers=3,udp']
 
     # Provision with shell
     # config.vm.provision :file, :source => ".", :destination => "/tmp/image-builder-service"
