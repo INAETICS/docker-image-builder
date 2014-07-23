@@ -6,9 +6,16 @@
 #FIXME configuration/environment
 #FIXME add a forced build
 #FIXME better input/error checking
-readonly BUILDER_ROOTDIR="/tmp/image-builder"
+readonly BUILDER_WORKDIR="/var/cache/docker-image-builder"
 readonly BUILDER_DEBUG="true"
-readonly REGISTRY_NAMESPACE="/inaetics/image-builder-registry"
+readonly REGISTRY_NAMESPACE="/inaetics/docker-image-builder"
+#
+# Supporting libs
+#
+
+source "$(dirname $0)/lib/builder.sh"
+source "$(dirname $0)/lib/docker.sh"
+source "$(dirname $0)/lib/etcdctl.sh"
 
 #
 # Util functions 
@@ -51,32 +58,80 @@ _dirname () {
   echo "$@" | tr '/' '_'
 }
 
+# Get the repository directory for an image. The dir will
+# not be created to allow git to clone into it.
 #
-# Supporting libs
-#
+#  args: $1, <name>, [<user>/]<repository>
+#  echo: <dir>
+_get_repository_dir () {
+  #FIXME check input by parsing name
+  _dbg "-> $FUNCNAME - args: $@"
+  dir="${BUILDER_WORKDIR}/repos/$(_dirname $1)"
+  _dbg "-> $FUNCNAME - repository dir: $dir"
+  echo $dir
+}
 
-source "$(dirname $0)/lib/builder.sh"
-source "$(dirname $0)/lib/docker.sh"
-source "$(dirname $0)/lib/etcdctl.sh"
+# Get the build directory for an image. The dir will
+# not be created to allow git to clone into it.
+#
+#  args: $1, <name>, [<user>/]<repository>
+#  echo: <dir>
+_get_build_dir () {
+  #FIXME check input by parsing name
+  _dbg "-> $FUNCNAME - args: $@"
+  dir="${BUILDER_WORKDIR}/builds/$(_dirname $1)"
+  _dbg "-> $FUNCNAME - repository dir: $dir"
+  echo $dir
+}
 
 #
 # Core functions
 #
 
-# Determine the repository directory to use for a specific 
-# image name; [<user>/]<repository>
-#  args: $1, <name>
-#  echo: <dir>
-_get_repository_dir () {
-  #FIXME check input
-  _dbg "-> $FUNCNAME - args: $@"
-  if [ ! -d "${BUILDER_ROOTDIR}/repos" ]; then
-    _call mkdir ${BUILDER_ROOTDIR}/repos
+# Init directories and check enviroment.To be called in main 
+# process once at start of script execution.
+_init () {
+  if [ "${BUILDER_WORKDIR}" == "" ]; then
+    _log "FATAL: Missing env setting: BUILDER_WORKDIR"
+    exit 1
   fi
-  local dir=${BUILDER_ROOTDIR}/repos/$(_dirname $1)
-  _dbg "-> $FUNCNAME - dir: $dir"
+  if [ ! -d "${BUILDER_WORKDIR}" ]; then
+    _call mkdir -v ${BUILDER_WORKDIR}
+    if [ ! -d "${BUILDER_WORKDIR}" ]; then
+      _log "FATAL: Failed to create work dir: ${BUILDER_WORKDIR}"
+      exit 1
+    fi
+  fi
+  if [ ! -d "${BUILDER_WORKDIR}/repos" ]; then
+    _call mkdir -v ${BUILDER_WORKDIR}/repos
+    if [ ! -d "${BUILDER_WORKDIR}/repos" ]; then
+      _log "FATAL: Failed to create repos dir: ${BUILDER_WORKDIR}/repos"
+      exit 1
+    fi
+  fi
+  if [ ! -d "${BUILDER_WORKDIR}/builds" ]; then
+    _call mkdir -v ${BUILDER_WORKDIR}/builds
+    if [ ! -d "${BUILDER_WORKDIR}/builds" ]; then
+      _log "FATAL: Failed to create builds dir: ${BUILDER_WORKDIR}/builds"
+      exit 1
+    fi
+  fi
+}
+
+# Get the build directory for an image. The dir will
+# not be created to allow git to clone into it.
+#
+#  args: $1, <name>, [<user>/]<repository>
+#  echo: <dir>
+_get_build_dir () {
+  #FIXME check input by parsing name
+  _dbg "-> $FUNCNAME - args: $@"
+  dir="${BUILDER_WORKDIR}/builds/$(_dirname $1)"
+  _dbg "-> $FUNCNAME - repository dir: $dir"
   echo $dir
 }
+
+
 
 # Update a git repository by either cloning or pulling and returning
 # its master revision
@@ -168,7 +223,7 @@ _publish_registry_image () {
 _push_image_upstream () {
   #FIXME if the image was pulled skip tagging pushing to origin
   _dbg "-> $FUNCNAME - args: $@"
-  local registries=$(etcd/values /inaetics/docker-registry-service)
+  local registries=$(etcd/values $REGISTRY_NAMESPACE)
   _dbg "-> $FUNCNAME - registries: $registries"
   local res
   for registry in $registries; do
@@ -259,6 +314,11 @@ locate_image () {
     located_image_id=$(docker/get_image_id $located_image_name)
   fi
 
+  if [ "$located_image_id" == "" ] || [ "$located_image_name" == "" ]; then
+    _log "Failed to locate image $requested_image_name with $repository_url"
+    exit 1
+  fi
+
   _log "Pushing image to docker registries"
   _push_image_upstream $located_image_id $located_image_name
 
@@ -285,7 +345,7 @@ Commands:
 #
 # Main
 #
-
+_init
 case $1 in
   locate)
     if [ -z $2 ] || [ -z $3 ]; then

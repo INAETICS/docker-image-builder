@@ -2,38 +2,6 @@
 #
 # (C) 2014 INAETICS, <www.inaetics.org> - Apache License v2.
 
-# Retrieve the vuilder root dir 
-#  args: $1 - <repository>
-#  echo : <dir>
-#  return: 0, if the ping succeeds
-#    1, if the ping fails
-builder/_get_root_dir () {
-  _dbg "-> $FUNCNAME - args: $@"
-  local dir="${BUILDER_ROOTDIR:-/tmp/builder}/builds"
-  if [ ! -d "$dir" ]; then
-    _call mkdir $dir
-  fi
-  _dbg "-> $FUNCNAME - dir: $dir"
-  echo $dir
-}
-
-# Determine the builds directory to use for a specific 
-# image name; [<user>/]<repository>
-#  args: $1, <name>
-#  echo: <dir>
-#  return: 0, if success
-#    1, if fail 
-#FIXME needs tag support
-builder/_get_build_dir () {
-  _dbg "-> $FUNCNAME - args: $@"
-  local dir="$(builder/_get_root_dir)/$(_dirname $1)"
-  if [ ! -d "$dir" ]; then
-    _call mkdir $dir
-  fi
-  _dbg "-> $FUNCNAME - dir: $dir"
-  echo $dir
-}
-
 # Process the APT_PROXY directive in a Dockerfile
 #  args: $1, <dir>
 #  return: 0, if success
@@ -71,7 +39,7 @@ builder/_process_jdkinstall () {
   fi
   
   source java-installer/java-settings
-  local jdk="$(builder/_get_root_dir)/$JDK_ARCHIVE"
+  local jdk="${BUILDER_WORKDIR}/$JDK_ARCHIVE"
   if [ ! -f "$jdk" ]; then
     _log "Downloading JDK from $JDK_LOCATION"
     _call curl -L -C - -b "oraclelicense=accept-securebackup-cookie" -o ${jdk}.download $JDK_LOCATION
@@ -115,7 +83,7 @@ builder/build_image () {
     return 1
   fi
 
-  local builddir=$(builder/_get_build_dir $1)
+  local builddir=$(_get_build_dir $1)
   _log "Synchronizing resources $builddir"
   _call rsync -va --exclude="tools" --exclude=".git" --exclude=".vagrant" $2/* $builddir
 
