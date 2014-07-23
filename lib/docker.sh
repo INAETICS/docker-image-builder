@@ -77,7 +77,7 @@ docker/_parse_repo () {
 #   echo: [<user>/]<name>:<tag>
 #   return: 0, if success
 #     1, if fail
-docker/_parse_name () {
+docker/parse_image_name () {
   _dbg "-> $FUNCNAME - args: $@"
   local repo=($(docker/_parse_repo $1))
   if [ ${#repo[@]} -ne 4 ]; then
@@ -92,26 +92,6 @@ docker/_parse_name () {
   fi
   _dbg "-> $FUNCNAME - result: $result"
   echo $result
-}
-
-# Create a new repository string from an 
-# repository string and a host.
-#   args: $1 - <image name>, [<host>/][<user>/]<name>[:<tag>];
-#     $2 - [host], may be nil for central
-#   echo:  [<host>/][<user>/]<name>[:<tag>];
-#   return: 0, if success
-#     1, if fail
-docker/_get_repo () {
-  _dbg "-> $FUNCNAME - args: $@"
-  local spec=$(docker/_parse_name $1)
-  local tag
-  if [ "$2" != "" ]; then
-     tag="$2/$spec"
-  else
-     tag="$spec"
-  fi
-  _dbg "-> $FUNCNAME - tag: $tag"
-  echo $tag
 }
 
 # Returns the image id for a name
@@ -155,60 +135,55 @@ docker/get_image_name () {
 # If the repo contains a host it will be included in the hosts. Use
 # "central" to pull from the Docker Index.
 #   args: $1 - <image id>
-#     $2 - <image name>
-#     $3 - <registry host>, may be nil
+#     $2 - <repo name>, [<host>/][<user>/]<name>[:<tag>]
+#   echo: <repo name>
+#   return: 0, if succes
+#     1, if failure
 docker/tag_image () {
   _dbg "-> $FUNCNAME - args: $@"
-  local tag=$(docker/_get_repo $2 $3)
-  _dbg "-> $FUNCNAME - tag: $tag"
-  _call docker tag $1 $tag
-  echo $tag
+  _call docker tag $1 $2
+  if [ $? -eq 0 ]; then
+    _dbg "-> $FUNCNAME - tagged"
+    echo $2
+    return 0
+  fi
+  _dbg "-> $FUNCNAME - failed"
+  return 1
 }
 
 # Push an image to a registry
-#
-# Because we can only push tags this function
-# will call docker_tag_image first.
-#   args: $1 - <image id>
-#     $2 - <image name>
-#     $3 - <registry host>
+#   args: $1 - <repo name>, [<host>/][<user>/]<name>[:<tag>]
+#   echo: <repo name>
+#   return: 0, if succes
+#     1, if failure
 docker/push_image () {
   _dbg "-> $FUNCNAME - args: $@"
-  local tag=$(docker/tag_image $1 $2 $3)
+  _call docker push $1
   if [ $? -eq 0 ]; then
-    _call docker push $tag
-    if [ $? -eq 0 ]; then
-      _dbg "-> $FUNCNAME - pushed $tag"
-      echo $tag
-      return 0
-    fi
+    _dbg "-> $FUNCNAME - pushed"
+    echo $1
+    return 0
   fi
+  _dbg "-> $FUNCNAME - failed"
   return 1
 }
 
 # Pull an image from a registry
-#
-#   args: $1 - > <image name>, [<host>/][<user>/]<name>[:<tag>];
-#     $3 - <registry host>
+#   args: $1 - <image name>, [<host>/][<user>/]<name>[:<tag>]
+#   echo: <docker id>
+#   return: 0, if success
+#     1, if failure
 docker/pull_image () {
   _dbg "-> $FUNCNAME - args: $@"
-
-  local repo 
-  if [ "$2" != "" ]; then
-    repo=$(docker/_get_repo $1 $2)
-  else
-    repo=$1
-  fi
-  _dbg "-> $FUNCNAME - pulling: $repo"
-  _call docker pull $repo
-  if [ $? -ne 0 ]; then
-    _dbg "-> $FUNCNAME - Failed!"
-    return 1
+  _call docker pull $1
+  if [ $? -eq 0 ]; then
+    local dockerid=$(docker/get_image_id $1)
+    _dbg "-> $FUNCNAME - dockerid: $dockerid"
+    echo $dockerid
+    return 0
   fi 
-  local dockerid=$(docker/get_image_id $repo)
-  _dbg "-> $FUNCNAME - dockerid: $dockerid"
-  echo $dockerid
-  return 0
+  _dbg "-> $FUNCNAME - failed"
+  return 1
 }
 
 ###EOF###

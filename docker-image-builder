@@ -225,9 +225,8 @@ _push_image_upstream () {
   _dbg "-> $FUNCNAME - registries: $registries"
   local res
   for registry in $registries; do
-    #FIXME duplicate work
-    res=$(docker/tag_image $1 $2 $registry)
-    res=$(docker/push_image $1 $2 $registry)
+    res=$(docker/tag_image $1 $registry/$2)
+    res=$(docker/push_image $registry/$2)
     if [ ! "$res" == "" ]; then
       _log "-> pushed $res"
     fi
@@ -246,7 +245,7 @@ _pull_upstream_image() {
   _dbg "-> $FUNCNAME - registries: $registries"
   local dockerid
   for registry in $registries; do
-    dockerid=$(docker/pull_image $1 $registry)
+    dockerid=$(docker/pull_image $registry/$1)
     if [ "$dockerid" != "" ]; then
       _dbg "-> $FUNCNAME - image pulled from $registry"
       if [ "$2" == "" ] || [ "$2" == "$dockerid" ]; then
@@ -269,7 +268,7 @@ _pull_upstream_image() {
 #    1, if image was not found
 cache_image () {
   _dbg "-> $FUNCNAME - args: $@"
-  local image_name=$(docker/_parse_name $1)
+  local image_name=$(docker/parse_image_name $1)
   if [ "$image_name" == "" ]; then
     _log "Failed to parse name: $1"
     return 1
@@ -299,7 +298,7 @@ cache_image () {
 #    $2 - <repository url>
 locate_image () {
   _dbg "-> $FUNCNAME - args: $@"
-  local image_name=$(docker/_parse_name $1);
+  local image_name=$(docker/parse_image_name $1);
   local repository_url=$2
   if [ "$image_name" == "" ] || [ "$repository_url" == "" ]; then
     _log "Parameters required"
@@ -343,7 +342,7 @@ locate_image () {
    
   if [ "$located_image_id" != "" ] && [ "$located_image_name" == "" ]; then
     _log "Checking for remotely available image"
-    located_image_name=$(_pull_upstream_image $located_image_id $image_name)
+    located_image_name=$(_pull_upstream_image $image_name $located_image_id)
     if [ "$located_image_name" != "" ]; then
       _log "-> pulled remote image: $located_image_name"
     else
