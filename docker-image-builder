@@ -131,8 +131,6 @@ _get_build_dir () {
   echo $dir
 }
 
-
-
 # Update a git repository by either cloning or pulling and returning
 # its master revision
 #  args: $1, <repository url>
@@ -181,8 +179,7 @@ _update_registry_images () {
 # Locate an image in the registry by name and matching repository
 # revision.
 #  args: $1: <repository name>, format [<user>/]<repository>
-#    $2: <repository revision>
-#  echo: <dockerid>
+#  echo: <name> <dockerid> <gitrev> <giturl>
 #  return: 0, if image was found
 #    1, if image was not found
 _locate_registry_image () {
@@ -193,26 +190,27 @@ _locate_registry_image () {
   _dbg "-> $FUNCNAME - info: $info"
   if [ "${info}" == "" ]; then
     _dbg "-> $FUNCNAME - image not found"
-  fi
-  local array=(${info//#/ })
-  if [ "${array[2]}" != "$2" ]; then  
-    _dbg "-> $FUNCNAME - image is old: ${array[2]} != $2"
     return 1
   fi
-  _dbg "-> $FUNCNAME - dockerid: ${array[1]}"
-  echo ${array[1]}
+  _dbg "-> $FUNCNAME - info: $info"
+  echo ${info//#/ }
 }
 
 # Locate an image in the registry by name and matching repository
 # revision.
 #  args: $1: <repository name>, format [<user>/]<repository>
-#    $2..n: <image info> 
+#    $2: <image id> 
+#    $3: <image rev> 
+#    $4: <image url> 
 _publish_registry_image () {
   _dbg "-> $FUNCNAME - args: $@"
+  if [ "$1" == "" ] || [ "$2" == "" ]; then
+    _log "Image name and id required"
+    return 1
+  fi
   local path="$REGISTRY_NAMESPACE/$(_dirname $1)"
   _dbg "-> $FUNCNAME - path: $path"
-  local info=${@:2}
-  info=${info// /#}
+  local info="${1}#${2}#${3:-nil}#${4:-nil}"
   _dbg "-> $FUNCNAME - info: $info"
   etcd/put $path "$info"
 }
@@ -223,10 +221,12 @@ _publish_registry_image () {
 _push_image_upstream () {
   #FIXME if the image was pulled skip tagging pushing to origin
   _dbg "-> $FUNCNAME - args: $@"
-  local registries=$(etcd/values $REGISTRY_NAMESPACE)
+  local registries=$(etcd/values /inaetics/docker-registry-service)
   _dbg "-> $FUNCNAME - registries: $registries"
   local res
   for registry in $registries; do
+    #FIXME duplicate work
+    res=$(docker/tag_image $1 $2 $registry)
     res=$(docker/push_image $1 $2 $registry)
     if [ ! "$res" == "" ]; then
       _log "-> pushed $res"
@@ -235,37 +235,81 @@ _push_image_upstream () {
 }
 
 # Push an image to available docker registries.
-#  args: $1: <image id>>
-#    $2: <image name> 
-_pull_image_upstream() {
+#  args: $1: <image name>
+#    $2: <docker id>, optional filter
+#  echo: <dockerid>
+#  return: 0, if image was found
+#    1, if image was not found
+_pull_upstream_image() {
   _dbg "-> $FUNCNAME - args: $@"
   local registries=$(etcd/values /inaetics/docker-registry-service)
   _dbg "-> $FUNCNAME - registries: $registries"
+  local dockerid
   for registry in $registries; do
-    located_image_name=$(docker/pull_image $1 $2 $registry)
-    #FIXME consider imageid during pull so we know we did not pull an  old copy
-    located_image_name=$(docker/get_image_name $1)
-    if [ "$located_image_name" != "" ]; then
-      echo $located_image_name
-      return 0
+    dockerid=$(docker/pull_image $1 $registry)
+    if [ "$dockerid" != "" ]; then
+      _dbg "-> $FUNCNAME - image pulled from $registry"
+      if [ "$2" == "" ] || [ "$2" == "$dockerid" ]; then
+        local res=$(docker/tag_image $dockerid $1)
+        echo $dockerid
+        return 0
+      fi
+      _dbg "-> $FUNCNAME - image dockerid does not match"
     fi
+    _dbg "-> $FUNCNAME - image not found at $registry"
   done
-  return 1
 }
+
+
+# Pull an upstream image to the local docker cache and push
+# it out to all docker registry services
+#   args: $1 - <image name>
+#  echo: <image_id>
+#  return: 0, if image was found
+#    1, if image was not found
+cache_image () {
+  _dbg "-> $FUNCNAME - args: $@"
+  local image_name=$(docker/_parse_name $1)
+  if [ "$image_name" == "" ]; then
+    _log "Failed to parse name: $1"
+    return 1
+  fi
+  local dockerid=$(docker/get_image_id $image_name)
+  if [ "$dockerid" != "" ]; then
+    _log "Found local image: $dockerid"
+  else
+    dockerid=$(_pull_upstream_image $image_name)
+    if [ "$dockerid" != "" ]; then
+      _log "Pulled upstream image: $dockerid"
+    fi
+  fi
+  if [ "$dockerid" != "" ]; then
+    _log "Pushing to upstream repositories"
+    _call _push_image_upstream $dockerid $image_name
+    echo $dockerid
+    exit 0
+  fi
+  _log "Unable to locate image $image_name"
+  exit 1
+}
+
 
 # Builds a Docker image and publishes the results to Etcd
 #  args: $1: <repository name>, format [<user>/]<repository>
 #    $2 - <repository url>
-#FIXME rename to locate_image (?)
 locate_image () {
   _dbg "-> $FUNCNAME - args: $@"
-  local requested_image_name=$1
+  local image_name=$(docker/_parse_name $1);
   local repository_url=$2
-  local repository_dir=$(_get_repository_dir $requested_image_name)
-  local apt_cachers=($(etcd/values /inaetics/apt-cacher-service))
-  local docker_registries=$(etcd/values /inaetics/docker-registry-service)
-
-  _log "Locating image $requested_image_name"
+  if [ "$image_name" == "" ] || [ "$repository_url" == "" ]; then
+    _log "Parameters required"
+   return 1
+  fi
+  local repository_dir=$(_get_repository_dir $image_name)
+  local located_image_id
+  local located_image_name
+  
+  _log "Locating image $image_name"
   _dbg "-> $FUNCNAME - url:  $repository_url"
   _dbg "-> $FUNCNAME - dir:  $repository_dir"
 
@@ -274,14 +318,19 @@ locate_image () {
   _log "-> repository revision is $repository_rev"
 
   _log "Looking up image in registry"
-  local located_image_id=$(_locate_registry_image $requested_image_name $repository_rev)
-  if [ "$located_image_id" == "" ]; then
+  local registry_image=($(_locate_registry_image $image_name))
+  if [ ${#registry_image[@]} -eq 0 ]; then
     _log "-> no image found"
   else
-    _log "-> found image: $located_image_id"
+    _log "-> registered image: ${registry_image[@]}"
+    if [ "${registry_image[2]}" != "$repository_rev" ]; then
+      _log "-> registered image revision is old"
+    else
+      located_image_id=${registry_image[1]}
+      _log "-> registered image is up to date"
+    fi
   fi
 
-  local located_image_name
   if [ "$located_image_id" != "" ]; then
     _log "Checking for locally stored image"
     located_image_name=$(docker/get_image_name $located_image_id)
@@ -294,7 +343,7 @@ locate_image () {
    
   if [ "$located_image_id" != "" ] && [ "$located_image_name" == "" ]; then
     _log "Checking for remotely available image"
-    located_image_name=$(_pull_image_upstream $located_image_id $requested_image_name)
+    located_image_name=$(_pull_upstream_image $located_image_id $image_name)
     if [ "$located_image_name" != "" ]; then
       _log "-> pulled remote image: $located_image_name"
     else
@@ -303,19 +352,20 @@ locate_image () {
   fi 
 
   if [ "$located_image_name" != "" ]; then
-    _log "Tagging located image name: $requested_image_name"
-    located_image_name=$(docker/tag_image $located_image_id $requested_image_name)
+    _log "Tagging located image name: $image_name"
+    located_image_name=$(docker/tag_image $located_image_id $image_name)
   fi
 
   if [ "$located_image_name" == "" ]; then
     _log "Building image locally"
-    builder/build_image $requested_image_name $repository_dir ${apt_cachers[0]}
-    located_image_name=$requested_image_name
+    local apt_cachers=($(etcd/values /inaetics/apt-cacher-service))
+    _call builder/build_image $image_name $repository_dir ${apt_cachers[0]}
+    located_image_name=$image_name
     located_image_id=$(docker/get_image_id $located_image_name)
   fi
 
   if [ "$located_image_id" == "" ] || [ "$located_image_name" == "" ]; then
-    _log "Failed to locate image $requested_image_name with $repository_url"
+    _log "Failed to locate image $image_name with $repository_url"
     exit 1
   fi
 
@@ -323,7 +373,7 @@ locate_image () {
   _push_image_upstream $located_image_id $located_image_name
 
   _log "Publishing image in builder registry"
-  _publish_registry_image $requested_image_name $requested_image_name $located_image_id $repository_rev $repository_url
+  _publish_registry_image $image_name $located_image_id $repository_rev $repository_url
   echo $located_image_id
 }
 
@@ -332,6 +382,9 @@ _usage() {
   echo "Usage: $(basename $0) COMMAND [arg...]
 
 Commands:
+  cache REPO_NAME
+   pull an upstream images into the local docker caches and push it to all
+   docker registry services
   locate REPO_NAME GIT_REPO_URL
    builds a new or updates an existing Docker image, pulling the repository from
    the given Git repository URL and tagging it with the given REPO_NAME;
@@ -347,21 +400,21 @@ Commands:
 #
 _init
 case $1 in
+  cache)
+    cache_image ${@:2}
+    exit $?
+  ;;
   locate)
-    if [ -z $2 ] || [ -z $3 ]; then
-      _usage
-      exit 1
-    fi
-    locate_image $2 $3
+    locate_image ${@:2}
     exit $?
   ;;
   update)
-    _update_registry_images
+    _update_registry_images ${@:2}
     exit $?
   ;;
   list)
     printf "%-25s %-12s %-12s %s\n" "REPOSITORY NAME" "IMAGE ID" "GIT REV" "GIT URL"
-    _list_registry_images
+    _list_registry_images ${@:2}
     exit $?
   ;;
   *)

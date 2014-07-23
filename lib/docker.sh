@@ -188,20 +188,27 @@ docker/push_image () {
 
 # Pull an image from a registry
 #
-#   args: $1 - <image id>
-#     $2 - <image name>, [<host>/][<user>/]<name>[:<tag>];
+#   args: $1 - > <image name>, [<host>/][<user>/]<name>[:<tag>];
 #     $3 - <registry host>
 docker/pull_image () {
   _dbg "-> $FUNCNAME - args: $@"
 
-  local tag=$(docker/_get_repo $2 $3)
-  _dbg "-> $FUNCNAME - pulling: $tag"
-  _call docker pull $tag
-  if [ $? -eq 0 ]; then
-    echo $tag
-    return 0
+  local repo 
+  if [ "$2" != "" ]; then
+    repo=$(docker/_get_repo $1 $2)
+  else
+    repo=$1
   fi
-  return 1
+  _dbg "-> $FUNCNAME - pulling: $repo"
+  _call docker pull $repo
+  if [ $? -ne 0 ]; then
+    _dbg "-> $FUNCNAME - Failed!"
+    return 1
+  fi 
+  local dockerid=$(docker/get_image_id $repo)
+  _dbg "-> $FUNCNAME - dockerid: $dockerid"
+  echo $dockerid
+  return 0
 }
 
 ###EOF###
