@@ -6,9 +6,10 @@
 #FIXME configuration/environment
 #FIXME add a forced build
 #FIXME better input/error checking
-readonly BUILDER_WORKDIR="/var/cache/docker-image-builder"
-readonly BUILDER_DEBUG="true"
-readonly REGISTRY_NAMESPACE="/inaetics/docker-image-builder"
+BUILDER_HOMEDIR=$(dirname $0)
+BUILDER_WORKDIR="/var/cache/docker-image-builder"
+BUILDER_DEBUG="true"
+REGISTRY_NAMESPACE="/inaetics/docker-image-builder"
 #
 # Supporting libs
 #

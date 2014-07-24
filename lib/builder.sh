@@ -38,7 +38,7 @@ builder/_process_jdkinstall () {
     return 0
   fi
   
-  source java-installer/java-settings
+  source ${BUILDER_HOMEDIR}/java-installer/java-settings
   local jdk="${BUILDER_WORKDIR}/$JDK_ARCHIVE"
   if [ ! -f "$jdk" ]; then
     _log "Downloading JDK from $JDK_LOCATION"
