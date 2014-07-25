@@ -66,7 +66,7 @@ etcd/values () {
   local code=$?
   if [ $code -gt 0 ] ; then
     _dbg "Failed to get keys for: $key"
-    return code;
+    return $code
   fi
   local values=()
   local resp
