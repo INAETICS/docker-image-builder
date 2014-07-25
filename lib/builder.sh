@@ -50,7 +50,7 @@ builder/_process_jdkinstall () {
     fi
   fi
   _log "Inserting JDK install from $jdk"
-  _call rsync -va  java-installer $builddir
+  _call rsync -va  ${BUILDER_HOMEDIR}/java-installer $builddir
   _call rsync -av $jdk $1/java-installer
   sed -i "/##JDK_INSTALL/ a\\
         ADD java-installer /tmp/java-installer/\n \
