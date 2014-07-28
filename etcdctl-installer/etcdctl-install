@@ -1,0 +1,11 @@
+#!/bin/bash
+
+PWD=`pwd`
+cd $(dirname $0)
+
+source etcdctl-settings
+
+tar zxf $ETCDCTL_ARCHIVE
+cp $ETCDCTL_NAME/etcdctl /usr/local/bin
+
+cd $PWD

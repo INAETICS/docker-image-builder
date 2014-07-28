@@ -97,7 +97,7 @@ etcd/put () {
   fi
   local code=$?
   if [ $code -ne 0 ]; then
-    _dbg "Failed to set valye for key: $key $value"
+    _dbg "Failed to set value for key: $key $value"
     return $code
   fi
 }

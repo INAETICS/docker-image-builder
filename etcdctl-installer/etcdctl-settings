@@ -1,0 +1,5 @@
+#!/bin/bash
+
+export ETCDCTL_NAME="etcd-v0.4.5-linux-amd64"
+export ETCDCTL_ARCHIVE="etcd-v0.4.5-linux-amd64.tar.gz"
+export ETCDCTL_LOCATION="https://github.com/coreos/etcd/releases/download/v0.4.5/etcd-v0.4.5-linux-amd64.tar.gz"
