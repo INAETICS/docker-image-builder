@@ -2,6 +2,17 @@
 #
 # (C) 2014 INAETICS, <www.inaetics.org> - Apache License v2.
 
+
+
+docker/_call_docker () {
+  if [ "$DOCKER_HOST" != "" ]; then
+    _call docker -H $DOCKER_HOST $@
+  else
+    _call docker $@
+  fi
+  return $?
+}
+
 # Tests if a repo is alive
 #
 # This method is also used to determin whether a part of a
@@ -141,7 +152,7 @@ docker/get_image_name () {
 #     1, if failure
 docker/tag_image () {
   _dbg "-> $FUNCNAME - args: $@"
-  _call docker tag $1 $2
+  docker/_call_docker tag $1 $2
   if [ $? -eq 0 ]; then
     _dbg "-> $FUNCNAME - tagged"
     echo $2
@@ -158,7 +169,7 @@ docker/tag_image () {
 #     1, if failure
 docker/push_image () {
   _dbg "-> $FUNCNAME - args: $@"
-  _call docker push $1
+  docker/_call_docker push $1
   if [ $? -eq 0 ]; then
     _dbg "-> $FUNCNAME - pushed"
     echo $1
@@ -175,7 +186,7 @@ docker/push_image () {
 #     1, if failure
 docker/pull_image () {
   _dbg "-> $FUNCNAME - args: $@"
-  _call docker pull $1
+  docker/_call_docker pull $1
   if [ $? -eq 0 ]; then
     local dockerid=$(docker/get_image_id $1)
     _dbg "-> $FUNCNAME - dockerid: $dockerid"

@@ -2,6 +2,8 @@
 #
 # (C) 2014 INAETICS, <www.inaetics.org> - Apache License v2.
 
+
+
 # Process the APT_PROXY directive in a Dockerfile
 #  args: $1, <dir>
 #  return: 0, if success
@@ -126,7 +128,7 @@ builder/build_image () {
   builder/_process_etcdctlinstall $builddir $3
 
   _log "Starting build $builddir"
-  _call docker build -t $1 $builddir
+  docker/_call_docker build -t $1 $builddir
   if [ $? -gt 0 ]; then
     _log "Build failed $1"
     return 1
