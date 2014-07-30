@@ -33,8 +33,8 @@ coreos:
         Requires=docker.service
 
         [Service]
-        ExecStartPre=/bin/bash -c 'if [ ! -d "/var/lib/image-builder-service" ]; then git clone https://github.com/INAETICS/docker-image-builder.git /var/lib/image-builder-service; else cd /var/lib/image-builder-service; git pull; cd -; fi'
-        ExecStart=/bin/bash -c 'echo "Faking a service"; while true; do /var/lib/image-builder-service/docker-image-builder build inaetics/ubuntu-common https://github.com/INAETICS/ubuntu-common-image.git; sleep 60; done'
+        ExecStartPre=/bin/bash -c 'if [ ! -d "/var/lib/docker-image-builder" ]; then git clone https://github.com/INAETICS/docker-image-builder.git /var/lib/docker-image-builder; else cd /var/lib/docker-image-builder; git pull; fi'
+        ExecStart=/var/lib/docker-image-builder/image-builder-service -v
         TimeoutSec=600
         Restart=always
         RestartSec=10
