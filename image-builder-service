@@ -8,9 +8,6 @@
 # Config
 #
 VERBOSE_LOG=false
-BUILDER_DIR="/var/lib/docker-image-builder"
-BUILDER_REPO="https://github.com/INAETICS/docker-image-builder.git"
-BUILDER_SCRIPT="docker-image-builder"
 UPDATE_INTERVAL=300
 
 declare -A DOCKER_IMAGES
@@ -36,25 +33,9 @@ verbose_out () {
   return $?
 }
 
-update_builder () {
-  if [ ! -d "$BUILDER_DIR" ]; then 
-    echo "Cloning image builder"
-    git clone $BUILDER_REPO $BUILDER_DIR
-  else 
-    echo "Updating image builder"
-    cd $BUILDER_DIR
-    git pull
-  fi
-  if [ $? -ne 0 ]; then
-    echo "Builder update failed!" 1>&2
-    return 1
-  fi
-  return 0
-}
-
 update_image () {
   echo "Updating image: $1 => $2"
-  local imageid=$(verbose_out $BUILDER_DIR/$BUILDER_SCRIPT locate $1 $2)
+  local imageid=$(verbose_out ./docker-image-builder locate $1 $2)
   if [ $? -ne 0 ]; then
     echo "Image update failed!" 1>&2
     return 1
@@ -88,14 +69,9 @@ echo -e "BUILDER_SCRIPT\t: $BUILDER_SCRIPT"
 echo "-----------------------------------------------------------------------"
 
 while true; do
-  update_builder
-  if [ $? -ne 0 ]; then
-      echo "Builder update failed! Skipping image updates..." 1>&2
-  else
-    for image in ${!DOCKER_IMAGES[@]}; do
-      update_image $image ${DOCKER_IMAGES[$image]}
-    done
-  fi
+  for image in ${!DOCKER_IMAGES[@]}; do
+    update_image $image ${DOCKER_IMAGES[$image]}
+  done
   echo "Will check for updates in $UPDATE_INTERVAL seconds..."
   sleep $UPDATE_INTERVAL &
   wait $!
