@@ -9,11 +9,11 @@
 #
 VERBOSE_LOG=false
 UPDATE_INTERVAL=300
+HOME_DIR=$(dirname $0)
 
 declare -A DOCKER_IMAGES
 DOCKER_IMAGES["inaetics/node-agent"]="https://github.com/INAETICS/node-agent-service.git"
 DOCKER_IMAGES["inaetics/node-provisioning"]="https://github.com/INAETICS/node-provisioning-service.git"
-
 #
 # Functions
 #
@@ -35,7 +35,7 @@ verbose_out () {
 
 update_image () {
   echo "Updating image: $1 => $2"
-  local imageid=$(verbose_out ./docker-image-builder locate $1 $2)
+  local imageid=$(verbose_out $HOME_DIR/docker-image-builder locate $1 $2)
   if [ $? -ne 0 ]; then
     echo "Image update failed!" 1>&2
     return 1
@@ -62,10 +62,9 @@ done
 echo "-----------------------------------------------------------------------"
 echo "Image builder service"
 echo "-----------------------------------------------------------------------"
-echo -e "VERBOSE LOG\t: $VERBOSE_LOG (use -v option to enable)"
-echo -e "BUILDER_DIR\t: $BUILDER_DIR"
-echo -e "BUILDER_REPO\t: $BUILDER_REPO"
-echo -e "BUILDER_SCRIPT\t: $BUILDER_SCRIPT"
+echo -e "HOME\t: $HOME_DIR"
+echo -e "VERBOSE\t: $VERBOSE_LOG (use -v option to enable)"
+echo -e "UPDATE\t: $UPDATE_INTERVAL (seconds)"
 echo "-----------------------------------------------------------------------"
 
 while true; do
@@ -76,3 +75,4 @@ while true; do
   sleep $UPDATE_INTERVAL &
   wait $!
 done
+
