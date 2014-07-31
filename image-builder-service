@@ -12,6 +12,7 @@ UPDATE_INTERVAL=300
 HOME_DIR=$(dirname $0)
 
 declare -A DOCKER_IMAGES
+DOCKER_IMAGES["inaetics/node-controller"]="https://github.com/INAETICS/node-controller-image.git"
 DOCKER_IMAGES["inaetics/node-agent"]="https://github.com/INAETICS/node-agent-service.git"
 DOCKER_IMAGES["inaetics/node-provisioning"]="https://github.com/INAETICS/node-provisioning-service.git"
 #
