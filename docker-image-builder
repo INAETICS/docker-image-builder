@@ -136,6 +136,7 @@ _get_build_dir () {
 # its master revision
 #  args: $1, <repository url>
 #   $2, <repository dir>
+#   $3, <repository branch>
 #  echo: <revision>
 _update_git_repository () {
   #FIXME check input
@@ -147,7 +148,7 @@ _update_git_repository () {
     _call git pull
   else
     _dbg "-> $FUNCNAME - dir empty, cloning!"
-    _call git clone --depth=1 $1 $2
+    _call git clone -b $3 --single-branch --depth=1 $1 $2
   fi
   local rev=$(git log --pretty=oneline -1 $branch | awk '{print $1}')
   _dbg "$FUNCNAME - rev: $rev"
@@ -297,11 +298,13 @@ cache_image () {
 # Builds a Docker image and publishes the results to Etcd
 #  args: $1: <repository name>, format [<user>/]<repository>
 #    $2 - <repository url>
+#    $3 - <repository branch>
 locate_image () {
   _dbg "-> $FUNCNAME - args: $@"
   local image_name=$(docker/parse_image_name $1);
   local repository_url=$2
-  if [ "$image_name" == "" ] || [ "$repository_url" == "" ]; then
+  local repository_branch=$3
+  if [ "$image_name" == "" ] || [ "$repository_url" == "" ] || [ "$repository_branch" == "" ]; then
     _log "Parameters required"
    return 1
   fi
@@ -314,7 +317,7 @@ locate_image () {
   _dbg "-> $FUNCNAME - dir:  $repository_dir"
 
   _log "Updating repository from  $repository_url"
-  local repository_rev=$(_update_git_repository $repository_url $repository_dir)
+  local repository_rev=$(_update_git_repository $repository_url $repository_dir $repository_branch)
   _log "-> repository revision is $repository_rev"
 
   _log "Looking up image in registry"
@@ -385,7 +388,7 @@ Commands:
   cache REPO_NAME
    pull an upstream images into the local docker caches and push it to all
    docker registry services
-  locate REPO_NAME GIT_REPO_URL
+  locate REPO_NAME GIT_REPO_URL GIT_REPO_BRANCH
    builds a new or updates an existing Docker image, pulling the repository from
    the given Git repository URL and tagging it with the given REPO_NAME;
   list

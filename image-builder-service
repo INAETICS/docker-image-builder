@@ -12,10 +12,10 @@ UPDATE_INTERVAL=300
 HOME_DIR=$(dirname $0)
 
 declare -A DOCKER_IMAGES
-DOCKER_IMAGES["inaetics/node-controller"]="https://github.com/INAETICS/node-controller-image.git"
-DOCKER_IMAGES["inaetics/node-agent"]="https://github.com/INAETICS/node-agent-service.git"
-DOCKER_IMAGES["inaetics/node-provisioning"]="https://github.com/INAETICS/node-provisioning-service.git"
-DOCKER_IMAGES["inaetics/celix-node-agent"]="https://github.com/INAETICS/celix-node-agent-service.git"
+DOCKER_IMAGES["inaetics/node-controller"]="https://github.com/INAETICS/node-controller-image.git master"
+DOCKER_IMAGES["inaetics/node-agent"]="https://github.com/INAETICS/node-agent-service.git master"
+DOCKER_IMAGES["inaetics/node-provisioning"]="https://github.com/INAETICS/node-provisioning-service.git master"
+DOCKER_IMAGES["inaetics/celix-node-agent"]="https://github.com/INAETICS/celix-node-agent-service.git master"
 
 #
 # Functions
@@ -37,8 +37,8 @@ verbose_out () {
 }
 
 update_image () {
-  echo "Updating image: $1 => $2"
-  local imageid=$(verbose_out $HOME_DIR/docker-image-builder locate $1 $2)
+  echo "Updating image: $1 => $2 $3"
+  local imageid=$(verbose_out $HOME_DIR/docker-image-builder locate $1 $2 $3)
   if [ $? -ne 0 ]; then
     echo "Image update failed!" 1>&2
     return 1
@@ -72,7 +72,9 @@ echo "-----------------------------------------------------------------------"
 
 while true; do
   for image in ${!DOCKER_IMAGES[@]}; do
-    update_image $image ${DOCKER_IMAGES[$image]}
+    git_repository=`echo ${DOCKER_IMAGES[$image]} | awk '{print $1}'`
+    git_branch=`echo ${DOCKER_IMAGES[$image]} | awk '{print $2}'`
+    update_image $image $git_repository $git_branch
   done
   echo "Will check for updates in $UPDATE_INTERVAL seconds..."
   sleep $UPDATE_INTERVAL &
