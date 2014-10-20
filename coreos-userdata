@@ -34,7 +34,7 @@ coreos:
         Requires=docker.service
 
         [Service]
-        ExecStartPre=/bin/bash -c 'if [ ! -d "/var/lib/docker-image-builder" ]; then git clone https://github.com/INAETICS/docker-image-builder.git /var/lib/docker-image-builder; else cd /var/lib/docker-image-builder; git pull; fi'
+        ExecStartPre=/bin/bash -c 'if [ ! -d "/var/lib/docker-image-builder" ]; then git clone -b master --single-branch --depth 1 https://github.com/INAETICS/docker-image-builder.git /var/lib/docker-image-builder; else cd /var/lib/docker-image-builder; git pull; fi'
         ExecStart=/var/lib/docker-image-builder/image-builder-service -v
         TimeoutSec=600
         Restart=always
