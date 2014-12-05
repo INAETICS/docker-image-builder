@@ -145,7 +145,7 @@ _update_git_repository () {
   if [ -d "$2" ]; then
     _dbg "-> $FUNCNAME - dir exists, pulling!"
     cd $2
-    _call git pull
+    _call git fetch && git reset origin/$3 --hard
   else
     _dbg "-> $FUNCNAME - dir empty, cloning!"
     _call git clone -b $3 --single-branch --depth=1 $1 $2
